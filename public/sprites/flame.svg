@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Exhaust pointing left; its right edge sits against the ship's tail. -->
+  <path d="M2 32 L62 14 L52 32 L62 50 Z" fill="#ff8a1f" opacity="0.9"/>
+  <path d="M22 32 L62 23 L56 32 L62 41 Z" fill="#ffe36b"/>
+</svg>

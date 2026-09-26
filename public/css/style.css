@@ -1,0 +1,162 @@
+:root {
+  --bg: #05060d;
+  --fg: #e6ecf7;
+  --muted: #8b95ab;
+  --accent: #6aa9ff;
+  --good: #7dff9b;
+  --panel: rgba(12, 16, 32, 0.82);
+  --border: rgba(106, 169, 255, 0.35);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+canvas#game {
+  position: fixed;
+  inset: 0;
+  display: block;
+  touch-action: none;
+}
+
+[hidden] { display: none !important; }
+
+#hud {
+  position: fixed;
+  top: max(8px, env(safe-area-inset-top));
+  left: 12px;
+  right: 12px;
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  font-size: 14px;
+  color: var(--muted);
+  pointer-events: none;
+  flex-wrap: wrap;
+}
+#hud b { color: var(--fg); font-variant-numeric: tabular-nums; }
+#hud-level { color: var(--accent); font-weight: 600; }
+#hud-lives { letter-spacing: 2px; color: var(--fg); }
+.hud-btn {
+  margin-left: auto;
+  pointer-events: auto;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  text-align: center;
+  background: radial-gradient(ellipse at center, rgba(5, 6, 13, 0.35), rgba(5, 6, 13, 0.85));
+  overflow-y: auto;
+}
+.overlay h1 {
+  margin: 0 0 4px;
+  font-size: clamp(32px, 7vw, 56px);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.overlay h2 { margin: 0 0 12px; font-size: 32px; }
+.subtitle { color: var(--muted); margin: 0 0 24px; }
+
+.levels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  width: min(760px, 100%);
+}
+.levels button {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  text-align: left;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+}
+.levels button:hover, .levels button:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  transform: translateY(-1px);
+}
+.levels .num { color: var(--accent); font-weight: 700; font-size: 13px; }
+.levels .name { display: block; font-size: 17px; font-weight: 600; margin: 4px 0; }
+.levels .desc { display: block; color: var(--muted); font-size: 13px; }
+.levels .best { display: block; color: var(--good); font-size: 12px; margin-top: 8px; }
+
+.help { margin-top: 24px; color: var(--muted); font-size: 14px; line-height: 1.7; }
+kbd {
+  display: inline-block;
+  min-width: 22px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--fg);
+  font: 12px ui-monospace, monospace;
+}
+
+.actions { display: flex; gap: 12px; margin-top: 12px; }
+.actions button {
+  padding: 10px 22px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.actions button.primary { background: var(--accent); color: #05060d; border-color: var(--accent); font-weight: 600; }
+
+/* On-screen controls, shown on touch devices. */
+#touch { display: none; }
+body.touch #touch.active {
+  display: flex;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  justify-content: space-between;
+  padding: 0 12px;
+  pointer-events: none;
+}
+#touch .pad { display: flex; gap: 12px; pointer-events: auto; }
+#touch button {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: rgba(20, 28, 56, 0.55);
+  color: var(--fg);
+  font: 600 13px system-ui, sans-serif;
+  touch-action: none;
+}
+#touch button[data-action="left"], #touch button[data-action="right"] { font-size: 30px; }
+#touch button.pressed { background: rgba(106, 169, 255, 0.45); border-color: var(--accent); }
+#touch button.fire { border-color: rgba(255, 92, 122, 0.6); }
+#touch button.thrust { border-color: rgba(255, 138, 31, 0.6); }

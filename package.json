@@ -1,0 +1,23 @@
+{
+  "name": "gravitypilot",
+  "version": "1.0.0",
+  "description": "2D space flight game with gravity, playable in the browser",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/laurentmldev/gravitypilot.git"
+  },
+  "license": "Apache-2.0",
+  "dependencies": {
+    "express": "^4.22.3"
+  }
+}

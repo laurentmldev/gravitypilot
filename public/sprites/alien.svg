@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Nose points right (angle 0), like the player's ship. -->
+  <path d="M60 32 L34 14 L10 18 L20 32 L10 46 L34 50 Z" fill="#3a1f5c" stroke="#c58bff" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M46 32 L32 24 L24 32 L32 40 Z" fill="#c58bff"/>
+  <circle cx="36" cy="32" r="3.5" fill="#ff5cf0"/>
+</svg>

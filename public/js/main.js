@@ -1,5 +1,7 @@
 import { stepBodies, wrapPosition, delta, distance, circularSpeed } from './physics.js';
 import { LEVELS, ASTEROID_SIZES } from './levels.js';
+import { SHIP, MISSILE, steer, missileLaunch } from './ship.js';
+import { createPilot, pilot } from './ai.js';
 
 // ---------------------------------------------------------------------------
 // Tuning
@@ -9,8 +11,8 @@ const BASE = 800; // world units on the window's shorter side
 const DT = 1 / 120; // fixed physics step
 const MAX_STEPS = 12;
 
-const SHIP = { radius: 12, size: 38, turnRate: 3.6, thrust: 170, lives: 3, invulnerable: 2.5 };
-const MISSILE = { speed: 340, life: 2.8, radius: 3, size: 10, cooldown: 0.22, max: 8 };
+const PLAYER = { lives: 3, invulnerable: 2.5 };
+const ALIEN = { score: 250, warpIn: 1.2 };
 const TARGET = { radius: 10, size: 22, score: 100, respawn: 1.5 };
 const TRAIL = { every: 0.04, length: 45 };
 
@@ -22,6 +24,7 @@ const SPRITES = {
   planetBig: 'planet-big.svg',
   moon: 'moon.svg',
   asteroid: 'asteroid.svg',
+  alien: 'alien.svg',
   target: 'target.svg',
 };
 
@@ -103,6 +106,15 @@ function drawSprite(name, x, y, size, angle = 0, alpha = 1) {
   ctx.globalAlpha = alpha;
   ctx.drawImage(img, -size / 2, -size / 2, size, size);
   ctx.restore();
+}
+
+function drawShip(ship, sprite, x, y, alpha = 1) {
+  if (ship.thrusting) {
+    const size = SHIP.size * (0.55 + Math.random() * 0.2);
+    const back = SHIP.size * 0.2 + size * 0.46;
+    drawSprite('flame', x - Math.cos(ship.angle) * back, y - Math.sin(ship.angle) * back, size, ship.angle, alpha);
+  }
+  drawSprite(sprite, x, y, SHIP.size, ship.angle, alpha);
 }
 
 /** Draw a wrapping body, plus its copies on the far side when it straddles an edge. */
@@ -210,11 +222,16 @@ function allBodies() {
   return [
     ...s.massive,
     ...s.asteroids,
-    ...(s.ship ? [s.ship] : []),
+    ...ships(),
     ...s.missiles,
     ...s.targets,
     ...s.particles,
   ];
+}
+
+/** Every ship in play: the player (if alive) and the aliens. */
+function ships() {
+  return state.ship ? [state.ship, ...state.aliens] : [...state.aliens];
 }
 
 function buildWorld(levelIndex) {
@@ -229,6 +246,7 @@ function buildWorld(levelIndex) {
     planet: null,
     moon: null,
     ship: null,
+    aliens: [],
     missiles: [],
     asteroids: [],
     targets: [],
@@ -236,13 +254,13 @@ function buildWorld(levelIndex) {
     trail: [],
     trailTimer: 0,
     score: 0,
-    lives: SHIP.lives,
+    lives: PLAYER.lives,
     time: 0,
-    fireCooldown: 0,
     respawnTimer: 0,
     gameoverTimer: 0,
     targetTimers: [],
     asteroidTimer: level.asteroids ? rand(...level.asteroids.every) : 0,
+    alienTimer: rand(...level.aliens.first),
   };
 
   if (level.planet) {
@@ -319,14 +337,15 @@ function spawnShip() {
     radius: SHIP.radius,
     mass: 0,
     thrusting: false,
-    invulnerable: SHIP.invulnerable,
+    fireCooldown: 0,
+    invulnerable: PLAYER.invulnerable,
   };
   state.trail = [];
 }
 
 function isSpawnClear() {
   const p = spawnPoint();
-  const hazards = [...state.asteroids, ...(state.moon ? [state.moon] : [])];
+  const hazards = [...state.asteroids, ...state.aliens, ...state.missiles, ...(state.moon ? [state.moon] : [])];
   return hazards.every((h) => distance(p, h, world) > h.radius + 90);
 }
 
@@ -394,23 +413,53 @@ function spawnAsteroid(size = 'large', at = null) {
   });
 }
 
-function fireMissile() {
-  const ship = state.ship;
-  const cos = Math.cos(ship.angle);
-  const sin = Math.sin(ship.angle);
-  const nose = SHIP.size * 0.45;
-  const m = {
-    kind: 'missile',
-    x: ship.x + cos * nose,
-    y: ship.y + sin * nose,
-    vx: ship.vx + cos * MISSILE.speed,
-    vy: ship.vy + sin * MISSILE.speed,
-    radius: MISSILE.radius,
-    mass: 0,
-    life: MISSILE.life,
-  };
+function fireMissile(ship) {
+  const m = { kind: 'missile', ...missileLaunch(ship), radius: MISSILE.radius, mass: 0, life: MISSILE.life, owner: ship };
   wrapPosition(m, world);
   state.missiles.push(m);
+}
+
+/** Pilot commands, identical for the player and the aliens. */
+function command(ship, cmd, dt) {
+  steer(ship, cmd, dt);
+  ship.fireCooldown -= dt;
+  const inFlight = state.missiles.filter((m) => m.owner === ship).length;
+  if (cmd.fire && ship.fireCooldown <= 0 && inFlight < MISSILE.maxPerShip) {
+    fireMissile(ship);
+    ship.fireCooldown = MISSILE.cooldown;
+  }
+}
+
+function spawnAlien() {
+  const s = state;
+  // Appear somewhere clear: away from the player, planets, moons and rocks.
+  let spot = null;
+  for (let tries = 0; tries < 40 && !spot; tries++) {
+    const c = { x: rand(0, world.w), y: rand(0, world.h) };
+    const clear =
+      (!s.ship || distance(c, s.ship, world) > 350) &&
+      s.massive.every((b) => distance(c, b, world) > b.radius + 150) &&
+      [...s.asteroids, ...s.aliens].every((b) => distance(c, b, world) > 120);
+    if (clear) spot = c;
+  }
+  if (!spot) return;
+  const a = rand(0, Math.PI * 2);
+  s.aliens.push({
+    kind: 'alien',
+    ...spot,
+    vx: Math.cos(a) * 20,
+    vy: Math.sin(a) * 20,
+    ax: 0,
+    ay: 0,
+    angle: rand(0, Math.PI * 2),
+    radius: SHIP.radius,
+    mass: 0,
+    thrusting: false,
+    fireCooldown: ALIEN.warpIn, // no shooting while warping in
+    warp: ALIEN.warpIn,
+    pilot: createPilot(),
+  });
+  explode(spot.x, spot.y, 24, '#c58bff', 90);
 }
 
 function explode(x, y, count, color, speed = 120) {
@@ -432,28 +481,31 @@ function update(dt) {
   s.time += dt;
   const playing = s.mode === 'playing';
 
-  // Ship controls
+  // Pilots: the player's buttons, and the alien autopilots
   const ship = s.ship;
   if (ship && playing) {
-    const i = input();
-    if (i.left) ship.angle -= SHIP.turnRate * dt;
-    if (i.right) ship.angle += SHIP.turnRate * dt;
-    ship.thrusting = i.thrust;
-    ship.ax = i.thrust ? Math.cos(ship.angle) * SHIP.thrust : 0;
-    ship.ay = i.thrust ? Math.sin(ship.angle) * SHIP.thrust : 0;
+    command(ship, input(), dt);
     ship.invulnerable = Math.max(0, ship.invulnerable - dt);
-
-    s.fireCooldown -= dt;
-    if (i.fire && s.fireCooldown <= 0 && s.missiles.length < MISSILE.max) {
-      fireMissile();
-      s.fireCooldown = MISSILE.cooldown;
+  }
+  if (s.aliens.length) {
+    const view = {
+      world,
+      sources: [...s.massive, ...s.asteroids],
+      solids: s.massive,
+      missiles: s.missiles,
+      ships: ships(),
+      target: playing ? ship : null,
+    };
+    for (const a of s.aliens) {
+      a.warp = Math.max(0, a.warp - dt);
+      command(a, pilot(a, view, dt), dt);
     }
   }
 
   // Gravity: planet, moon and asteroids attract everything (and each other);
   // the ship, missiles and beacons are too light to attract anything.
   const sources = [...s.massive, ...s.asteroids];
-  const bodies = [...sources, ...(ship ? [ship] : []), ...s.missiles, ...s.targets];
+  const bodies = [...sources, ...ships(), ...s.missiles, ...s.targets];
   stepBodies(bodies, sources, world, dt);
 
   for (const a of s.asteroids) a.angle += a.spin * dt;
@@ -472,6 +524,7 @@ function update(dt) {
   handleCollisions();
 
   s.missiles = s.missiles.filter((m) => m.life > 0 && !m.dead);
+  s.aliens = s.aliens.filter((a) => !a.dead);
   s.targets = s.targets.filter((t) => !t.dead);
   const margin = 150;
   s.asteroids = s.asteroids.filter(
@@ -496,11 +549,18 @@ function update(dt) {
     }
   }
 
+  // Alien ships appear from time to time
+  s.alienTimer -= dt;
+  if (s.alienTimer <= 0) {
+    if (s.aliens.length < s.level.aliens.max) spawnAlien();
+    s.alienTimer = rand(...s.level.aliens.every);
+  }
+
   // Ship trail
-  if (ship) {
+  if (s.ship) {
     s.trailTimer -= dt;
     if (s.trailTimer <= 0) {
-      s.trail.push({ x: ship.x, y: ship.y });
+      s.trail.push({ x: s.ship.x, y: s.ship.y });
       if (s.trail.length > TRAIL.length) s.trail.shift();
       s.trailTimer = TRAIL.every;
     }
@@ -524,6 +584,16 @@ function hit(a, b) {
   return d < a.radius + b.radius;
 }
 
+function byPlayer(m) {
+  return m.owner && m.owner.kind === 'ship';
+}
+
+/** Missiles can hit any ship, including the one that fired them once armed. */
+function missileHitsShip(m, ship) {
+  if (m.owner === ship && MISSILE.life - m.life < MISSILE.armTime) return false;
+  return hit(m, ship);
+}
+
 function handleCollisions() {
   const s = state;
   const solids = s.massive;
@@ -538,7 +608,7 @@ function handleCollisions() {
     const t = s.targets.find((t) => !t.dead && hit(m, t));
     if (t) {
       m.dead = t.dead = true;
-      addScore(TARGET.score);
+      if (byPlayer(m)) addScore(TARGET.score);
       explode(t.x, t.y, 20, '#7dff9b', 140);
       continue;
     }
@@ -546,7 +616,19 @@ function handleCollisions() {
     if (a) {
       m.dead = true;
       destroyAsteroid(a, m);
-      addScore(ASTEROID_SIZES[a.size].score);
+      if (byPlayer(m)) addScore(ASTEROID_SIZES[a.size].score);
+      continue;
+    }
+    const alien = s.aliens.find((al) => !al.dead && missileHitsShip(m, al));
+    if (alien) {
+      m.dead = true;
+      killAlien(alien);
+      if (byPlayer(m)) addScore(ALIEN.score);
+      continue;
+    }
+    if (s.ship && !s.ship.invulnerable && missileHitsShip(m, s.ship)) {
+      m.dead = true;
+      killShip();
     }
   }
 
@@ -566,15 +648,33 @@ function handleCollisions() {
     }
   }
 
-  // Ship
-  // Respawn protection only covers asteroids: planets and moons are always solid.
+  // Aliens obey the same rules: planets, moons, rocks and other ships are deadly.
+  for (const al of s.aliens) {
+    if (al.dead) continue;
+    const rock = s.asteroids.find((a) => !a.dead && hit(al, a));
+    if (rock) destroyAsteroid(rock, al);
+    const other = s.aliens.find((o) => o !== al && !o.dead && hit(al, o));
+    if (other) killAlien(other);
+    if (rock || other || solids.some((b) => hit(al, b))) killAlien(al);
+  }
+
+  // Player ship. Respawn protection covers rocks, missiles and aliens, but
+  // planets and moons are always solid.
   const ship = s.ship;
   if (ship) {
     const crashed = solids.some((b) => hit(ship, b));
     const rock = !ship.invulnerable && s.asteroids.find((a) => !a.dead && hit(ship, a));
+    const alien = !ship.invulnerable && s.aliens.find((a) => !a.dead && hit(ship, a));
     if (rock) destroyAsteroid(rock, ship);
-    if (crashed || rock) killShip();
+    if (alien) killAlien(alien);
+    if (crashed || rock || alien) killShip();
   }
+}
+
+function killAlien(a) {
+  a.dead = true;
+  explode(a.x, a.y, 36, '#c58bff', 170);
+  explode(a.x, a.y, 16, '#ffffff', 90);
 }
 
 function destroyAsteroid(a, by) {
@@ -601,6 +701,7 @@ function destroyAsteroid(a, by) {
 
 function killShip() {
   const s = state;
+  if (!s.ship) return;
   explode(s.ship.x, s.ship.y, 40, '#ffb14a', 180);
   explode(s.ship.x, s.ship.y, 20, '#dfe8f5', 100);
   s.ship = null;
@@ -704,16 +805,14 @@ function render() {
     drawSprite('missile', m.x, m.y, MISSILE.size, 0, Math.min(1, m.life * 2));
   }
 
+  for (const a of s.aliens) {
+    const alpha = a.warp ? 1 - a.warp / ALIEN.warpIn : 1;
+    drawWrapped(a, SHIP.size / 2, (x, y) => drawShip(a, 'alien', x, y, alpha));
+  }
+
   const ship = s.ship;
   if (ship && !(ship.invulnerable && Math.floor(ship.invulnerable * 8) % 2)) {
-    drawWrapped(ship, SHIP.size / 2, (x, y) => {
-      if (ship.thrusting) {
-        const size = SHIP.size * (0.55 + Math.random() * 0.2);
-        const back = SHIP.size * 0.2 + size * 0.46;
-        drawSprite('flame', x - Math.cos(ship.angle) * back, y - Math.sin(ship.angle) * back, size, ship.angle);
-      }
-      drawSprite('ship', x, y, SHIP.size, ship.angle);
-    });
+    drawWrapped(ship, SHIP.size / 2, (x, y) => drawShip(ship, 'ship', x, y));
   }
 
   for (const p of s.particles) {

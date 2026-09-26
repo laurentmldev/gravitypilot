@@ -55,19 +55,5 @@ The golden book is stored on the host in `./data/goldenbook.txt` (next to `docke
 | `HOST_PORT` | `8080` | Port published on the host |
 | `BIND_ADDR` | `0.0.0.0` | Host address to bind; use `127.0.0.1` when the proxy runs on the same host |
 | `DATA_DIR` | `./data` | Host folder holding `goldenbook.txt` |
-| `APP_PORT` | `8080` | Port the server listens on inside the container |
-
-### Behind nginx-proxy
-
-[nginx-proxy](https://github.com/nginx-proxy/nginx-proxy) finds the game through `VIRTUAL_HOST`, but it can only forward to containers on a Docker network it is attached to. Otherwise it answers 502 with `no live upstreams`. `docker-compose.proxy.yml` adds that network and the `VIRTUAL_*` variables. Enable it in `.env`:
-
-```sh
-COMPOSE_FILE=docker-compose.yml:docker-compose.proxy.yml
-VIRTUAL_HOST=game.example.com
-PROXY_NETWORK=nginx-proxy   # see: docker inspect <proxy container> -f '{{json .NetworkSettings.Networks}}'
-BIND_ADDR=127.0.0.1         # optional: the host port is then only for local checks
-```
-
-Then `docker compose up -d --build` as usual.
 
 All asset URLs are relative, so the game also works when the proxy serves it under a sub-path (for example `https://example.com/gravitypilot/`).

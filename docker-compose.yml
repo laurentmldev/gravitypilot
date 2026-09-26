@@ -5,12 +5,13 @@ services:
     container_name: gravitypilot
     restart: unless-stopped
     environment:
-      PORT: 8080
+      PORT: ${APP_PORT:-8080}
     # Plain HTTP: TLS is terminated by the reverse proxy in front of it.
     # Set HOST_PORT to change the published port, or BIND_ADDR=127.0.0.1 when
-    # the proxy runs on the same host.
+    # the proxy runs on the same host. Behind nginx-proxy (VIRTUAL_HOST), add
+    # docker-compose.proxy.yml instead: see the README.
     ports:
-      - "${BIND_ADDR:-0.0.0.0}:${HOST_PORT:-8080}:8080"
+      - "${BIND_ADDR:-0.0.0.0}:${HOST_PORT:-8080}:${APP_PORT:-8080}"
     # The golden book is a text file on the host: ./data/goldenbook.txt by
     # default, or in the directory named by DATA_DIR.
     volumes:

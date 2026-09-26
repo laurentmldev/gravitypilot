@@ -1,11 +1,14 @@
 // Pilot difficulty levels. Distances are in world units: the shorter side of
 // the window is always 800 units. Masses are gravitational parameters (G*M).
+// Alien ships appear after `aliens.first` seconds, then every `aliens.every`
+// seconds while fewer than `aliens.max` are flying.
 export const LEVELS = [
   {
     id: 1,
     name: 'Deep space',
     description: 'No planet. Learn to fly.',
     targets: 2,
+    aliens: { first: [10, 16], every: [20, 35], max: 1 },
   },
   {
     id: 2,
@@ -14,6 +17,7 @@ export const LEVELS = [
     planet: { radius: 30, mass: 1.4e6, sprite: 'planetSmall' },
     shipOrbit: 280,
     targets: 2,
+    aliens: { first: [10, 16], every: [20, 35], max: 1 },
   },
   {
     id: 3,
@@ -23,6 +27,7 @@ export const LEVELS = [
     moon: { radius: 15, mass: 1.6e5, orbit: 190, sprite: 'moon' },
     shipOrbit: 310,
     targets: 3,
+    aliens: { first: [8, 14], every: [18, 30], max: 1 },
   },
   {
     id: 4,
@@ -33,6 +38,7 @@ export const LEVELS = [
     shipOrbit: 310,
     targets: 3,
     asteroids: { every: [2.5, 5], max: 6 },
+    aliens: { first: [8, 14], every: [15, 25], max: 2 },
   },
 ];
 

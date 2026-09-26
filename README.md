@@ -13,7 +13,9 @@ A 2D space flight game for the browser. Pilot a ship with three commands (turn, 
 
 - Thrust pushes the ship in the direction it points; when you release it the ship keeps its speed.
 - Leaving the window on one side brings you back on the opposite side.
-- Shoot the green beacons (100 points) and asteroids (20, 50 or 100 points as they split into smaller rocks). Crashing into a planet, the moon or an asteroid costs one of your 3 ships.
+- Missiles fly for 5.6 seconds and are pulled by gravity too. They can hit your own ship once they are 0.3 seconds old, so watch out for shots that swing around a planet and come back.
+- Alien ships appear from time to time and hunt you. They follow exactly the same rules as you: the same three commands, the same engine and turn rate, the same missiles, and they die from the same collisions (including their own missiles). Their autopilot (`public/js/ai.js`) simulates gravity a few seconds ahead to dodge planets, rocks and missiles, and to aim shots that curve under gravity.
+- Shoot the green beacons (100 points), asteroids (20, 50 or 100 points as they split into smaller rocks) and alien ships (250 points). Crashing into a planet, the moon, an asteroid or an alien, or being hit by a missile, costs one of your 3 ships.
 - Best scores are kept per level in the browser.
 
 ### Levels

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#05060d">
+  <title>Gravity Pilot</title>
+  <link rel="icon" href="sprites/ship.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="game" aria-label="Gravity Pilot game area"></canvas>
+
+  <div id="hud" hidden>
+    <span id="hud-level"></span>
+    <span>Score <b id="hud-score">0</b></span>
+    <span>Best <b id="hud-best">0</b></span>
+    <span id="hud-lives"></span>
+    <button id="btn-pause" class="hud-btn" aria-label="Pause">❚❚</button>
+  </div>
+
+  <section id="menu" class="overlay">
+    <h1>Gravity Pilot</h1>
+    <p class="subtitle">Fly, orbit and shoot in a world ruled by gravity.</p>
+    <div id="level-list" class="levels"></div>
+    <div class="help">
+      <p><kbd>←</kbd> <kbd>→</kbd> turn &nbsp; <kbd>↑</kbd> thrust &nbsp; <kbd>Space</kbd> fire &nbsp; <kbd>P</kbd> pause</p>
+      <p>Shoot the green beacons. Avoid planets, moons and asteroids.<br>Press <kbd>1</kbd>–<kbd>4</kbd> to pick a level.</p>
+    </div>
+  </section>
+
+  <section id="paused" class="overlay" hidden>
+    <h2>Paused</h2>
+    <div class="actions">
+      <button id="btn-resume" class="primary">Resume</button>
+      <button id="btn-quit">Menu</button>
+    </div>
+  </section>
+
+  <section id="gameover" class="overlay" hidden>
+    <h2>Game over</h2>
+    <p id="gameover-score"></p>
+    <div class="actions">
+      <button id="btn-retry" class="primary">Play again</button>
+      <button id="btn-menu">Menu</button>
+    </div>
+  </section>
+
+  <div id="touch" aria-hidden="true">
+    <div class="pad left">
+      <button data-action="left">⟲</button>
+      <button data-action="right">⟳</button>
+    </div>
+    <div class="pad right">
+      <button data-action="fire" class="fire">FIRE</button>
+      <button data-action="thrust" class="thrust">THRUST</button>
+    </div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

@@ -23,6 +23,9 @@
     <h1>Gravity Pilot</h1>
     <p class="subtitle">Fly, orbit and shoot in a world ruled by gravity.</p>
     <div id="level-list" class="levels"></div>
+    <div class="actions">
+      <button id="btn-book">Golden book</button>
+    </div>
     <div class="help">
       <p><kbd>←</kbd> <kbd>→</kbd> turn &nbsp; <kbd>↑</kbd> thrust &nbsp; <kbd>Space</kbd> fire &nbsp; <kbd>P</kbd> pause</p>
       <p>Shoot the green beacons. Avoid planets, moons and asteroids.<br>Press <kbd>1</kbd>–<kbd>4</kbd> to pick a level.</p>
@@ -40,9 +43,33 @@
   <section id="gameover" class="overlay" hidden>
     <h2>Game over</h2>
     <p id="gameover-score"></p>
+    <form id="entry-form" class="entry" hidden>
+      <p class="made-it">You made the top 10! Sign the golden book.</p>
+      <input id="entry-nickname" name="nickname" maxlength="20" placeholder="Nickname" autocomplete="nickname" required>
+      <textarea id="entry-comment" name="comment" maxlength="200" rows="2" placeholder="Comment (optional)"></textarea>
+      <button type="submit" class="primary">Sign</button>
+      <p id="entry-error" class="error" hidden></p>
+    </form>
+    <p id="entry-done" hidden></p>
     <div class="actions">
       <button id="btn-retry" class="primary">Play again</button>
       <button id="btn-menu">Menu</button>
+      <button id="btn-gameover-book">Golden book</button>
+    </div>
+  </section>
+
+  <section id="book" class="overlay" hidden>
+    <h2>Golden book</h2>
+    <div id="book-tabs" class="tabs" role="tablist"></div>
+    <div class="book-list">
+      <table>
+        <thead><tr><th>#</th><th>Pilot</th><th>Score</th><th>Comment</th><th>Date</th></tr></thead>
+        <tbody id="book-rows"></tbody>
+      </table>
+      <p id="book-empty" hidden>No entries yet for this level.</p>
+    </div>
+    <div class="actions">
+      <button id="btn-book-close" class="primary">Back</button>
     </div>
   </section>
 

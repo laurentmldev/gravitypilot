@@ -11,3 +11,7 @@ services:
     # the proxy runs on the same host.
     ports:
       - "${BIND_ADDR:-0.0.0.0}:${HOST_PORT:-8080}:8080"
+    # The golden book is a text file on the host: ./data/goldenbook.txt by
+    # default, or in the directory named by DATA_DIR.
+    volumes:
+      - "${DATA_DIR:-./data}:/app/data"

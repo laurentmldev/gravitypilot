@@ -2,6 +2,7 @@ import { stepBodies, wrapPosition, delta, distance, circularSpeed } from './phys
 import { LEVELS, ASTEROID_SIZES } from './levels.js';
 import { SHIP, MISSILE, steer, missileLaunch } from './ship.js';
 import { createPilot, pilot } from './ai.js';
+import { fetchBook, signBook, qualifies, renderBook, showBookError } from './goldenbook.js';
 
 // ---------------------------------------------------------------------------
 // Tuning
@@ -152,6 +153,12 @@ const KEYMAP = {
 };
 
 window.addEventListener('keydown', (e) => {
+  // Typing a nickname or comment must not steer the ship or restart the game.
+  if (e.target.closest && e.target.closest('input, textarea')) return;
+  if (bookReturn) {
+    if (e.code === 'Escape') closeBook();
+    return;
+  }
   const action = KEYMAP[e.code];
   if (action) {
     keys[action] = true;
@@ -725,6 +732,102 @@ function gameOver() {
     s.score >= best && s.score > 0 ? `New best: ${s.score}` : `Score ${s.score} · Best ${best}`;
   touchPanel.classList.remove('active');
   showOverlay('gameover');
+  offerGoldenBook(s);
+}
+
+// ---------------------------------------------------------------------------
+// Golden book
+// ---------------------------------------------------------------------------
+
+const entryForm = document.getElementById('entry-form');
+const entryError = document.getElementById('entry-error');
+const entryDone = document.getElementById('entry-done');
+let pendingEntry = null;
+let bookReturn = null; // overlay to go back to when the golden book closes
+
+/** After a game, ask for a nickname if the score makes the level's top 10. */
+async function offerGoldenBook(s) {
+  entryForm.hidden = true;
+  entryDone.hidden = true;
+  pendingEntry = null;
+  if (s.score <= 0) return;
+  const game = s;
+  let book;
+  try {
+    book = await fetchBook();
+  } catch {
+    return; // no server-side book (e.g. offline): just skip it
+  }
+  if (state !== game || !qualifies(book[game.level.id] || [], game.score)) return;
+  pendingEntry = { level: game.level.id, score: game.score };
+  entryError.hidden = true;
+  entryForm.hidden = false;
+  const nick = document.getElementById('entry-nickname');
+  try {
+    nick.value = localStorage.getItem('gravitypilot.nickname') || '';
+  } catch {
+    /* storage unavailable */
+  }
+  document.getElementById('entry-comment').value = '';
+  nick.focus();
+}
+
+entryForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!pendingEntry) return;
+  const nickname = document.getElementById('entry-nickname').value.trim();
+  const comment = document.getElementById('entry-comment').value.trim();
+  if (!nickname) return;
+  const button = entryForm.querySelector('button');
+  button.disabled = true;
+  try {
+    const { rank, levels } = await signBook({ ...pendingEntry, nickname, comment });
+    try {
+      localStorage.setItem('gravitypilot.nickname', nickname);
+    } catch {
+      /* storage unavailable */
+    }
+    const level = pendingEntry.level;
+    const mine = levels[level][rank - 1];
+    pendingEntry = null;
+    entryForm.hidden = true;
+    entryDone.textContent = `Signed! You are #${rank} in the golden book.`;
+    entryDone.hidden = false;
+    openBook(levels, level, mine);
+  } catch (err) {
+    entryError.textContent = err.message;
+    entryError.hidden = false;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+// Comments are a single line: Enter signs the book instead of adding a newline.
+document.getElementById('entry-comment').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    entryForm.requestSubmit();
+  }
+});
+
+async function openBook(levels = null, levelId = state.level.id, mine = null) {
+  bookReturn = overlays.find((id) => !document.getElementById(id).hidden) || 'menu';
+  showOverlay('book');
+  if (levels) {
+    renderBook(levels, levelId, mine);
+    return;
+  }
+  renderBook({}, levelId, null);
+  try {
+    renderBook(await fetchBook(), levelId, null);
+  } catch (err) {
+    showBookError(`The golden book is unavailable right now (${err.message}).`);
+  }
+}
+
+function closeBook() {
+  showOverlay(bookReturn || 'menu');
+  bookReturn = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -827,7 +930,7 @@ function render() {
 // DOM overlays and HUD
 // ---------------------------------------------------------------------------
 
-const overlays = ['menu', 'paused', 'gameover'];
+const overlays = ['menu', 'paused', 'gameover', 'book'];
 function showOverlay(name) {
   for (const id of overlays) document.getElementById(id).hidden = id !== name;
 }
@@ -870,6 +973,9 @@ document.getElementById('btn-resume').addEventListener('click', togglePause);
 document.getElementById('btn-quit').addEventListener('click', () => showMenu());
 document.getElementById('btn-retry').addEventListener('click', () => startGame(state.levelIndex));
 document.getElementById('btn-menu').addEventListener('click', () => showMenu());
+document.getElementById('btn-book').addEventListener('click', () => openBook());
+document.getElementById('btn-gameover-book').addEventListener('click', () => openBook());
+document.getElementById('btn-book-close').addEventListener('click', closeBook);
 
 // ---------------------------------------------------------------------------
 // Main loop

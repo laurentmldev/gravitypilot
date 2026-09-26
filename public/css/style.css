@@ -133,6 +133,63 @@ kbd {
 }
 .actions button.primary { background: var(--accent); color: #05060d; border-color: var(--accent); font-weight: 600; }
 
+/* Golden book */
+.entry {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(360px, 100%);
+  margin: 4px 0 8px;
+}
+.entry .made-it { margin: 0; color: #ffd66b; font-weight: 600; }
+.entry input, .entry textarea {
+  font: inherit;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--fg);
+  resize: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+.entry button {
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid #ffd66b;
+  background: #ffd66b;
+  color: #05060d;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.error { color: #ff7a8a; margin: 0; font-size: 14px; }
+#entry-done { color: #ffd66b; }
+
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; margin-bottom: 12px; }
+.tabs button {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.tabs button[aria-selected="true"] { color: #05060d; background: #ffd66b; border-color: #ffd66b; }
+.book-list { width: min(760px, 100%); max-height: 60vh; overflow: auto; background: var(--panel); border-radius: 10px; padding: 4px 8px; }
+.book-list table { width: 100%; border-collapse: collapse; font-size: 14px; text-align: left; }
+.book-list th { color: var(--muted); font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+.book-list td { padding: 8px; border-bottom: 1px solid rgba(106, 169, 255, 0.12); vertical-align: top; }
+.book-list td:nth-child(1), .book-list td:nth-child(3) { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.book-list td:nth-child(4) { color: var(--muted); overflow-wrap: anywhere; }
+.book-list td:nth-child(5) { color: var(--muted); white-space: nowrap; }
+.book-list tr.mine td { color: #ffd66b; }
+@media (max-width: 560px) {
+  .book-list th:nth-child(5), .book-list td:nth-child(5) { display: none; }
+}
+
 /* On-screen controls, shown on touch devices. */
 #touch { display: none; }
 body.touch #touch.active {

@@ -14,6 +14,10 @@ services:
     # the proxy runs on the same host.
     ports:
       - "127.0.0.1:${HOST_PORT:-3000}:3000"
+    labels:
+      gallery.title: "${SITE_TITLE}"
+      gallery.description: "${SITE_DESCRIPTION}"
+      gallery.thumbnail: "${SITE_THUMBNAIL}"
     # The golden book is a text file on the host: ./data/goldenbook.txt by
     # default, or in the directory named by DATA_DIR.
     volumes:

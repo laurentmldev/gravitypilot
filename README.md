@@ -4,12 +4,16 @@ A 2D space flight game for the browser. Pilot a ship with three commands (turn, 
 
 ## How to play
 
-| Action | Keyboard | Touch |
-| --- | --- | --- |
-| Turn left / right | `←` `→` (or `A` `D`) | ⟲ ⟳ buttons |
-| Engine thrust (while held) | `↑` (or `W`) | THRUST button |
-| Fire | `Space` (hold to keep firing) | FIRE button |
-| Pause | `P` or `Esc` | ❚❚ button |
+Pick a level, then register your nickname and choose one of 5 ships (Arrow, Dart, Falcon, Hornet, Raven) before taking off.
+
+| Action | Pilot 1 | Pilot 2 | Touch (pilot 1) |
+| --- | --- | --- | --- |
+| Turn left / right | `←` `→` | `A` `D` (`Q` `D` on AZERTY) | ⟲ ⟳ buttons |
+| Engine thrust (while held) | `↑` | `W` (`Z` on AZERTY) | THRUST button |
+| Fire (hold to keep firing) | `Space` or `↓` | `S` | FIRE button |
+| Pause | `P` or `Esc` | | ❚❚ button |
+
+A lone pilot can use either set of keys. Keys are bound by position, so pilot 2 flies with WASD on a QWERTY keyboard and ZQSD on an AZERTY one, and the labels on screen follow your layout. Each pilot can change their keys on the setup screen (click a key, then press the new one); `P`, `Esc`, `Enter` and `Tab` are reserved.
 
 - Thrust pushes the ship in the direction it points; when you release it the ship keeps its speed.
 - Leaving the window on one side brings you back on the opposite side.
@@ -17,7 +21,16 @@ A 2D space flight game for the browser. Pilot a ship with three commands (turn, 
 - Alien ships appear from time to time and hunt you. They follow exactly the same rules as you: the same three commands, the same engine and turn rate, the same missiles, and they die from the same collisions (including their own missiles). Their autopilot (`public/js/ai.js`) simulates gravity a few seconds ahead to dodge planets, rocks and missiles, and to aim shots that curve under gravity.
 - Shoot the green beacons (100 points), asteroids (20, 50 or 100 points as they split into smaller rocks) and alien ships (250 points). Crashing into a planet, the moon, an asteroid or an alien, or being hit by a missile, costs one of your 3 ships.
 - Your personal best for each level is kept in the browser.
-- **Golden book:** when a game ends with a score in the top 10 of its level, you can sign the golden book with a nickname and a comment. Anyone can read it from the main menu. It is shared by everyone playing on the same server.
+- **Golden book:** when a game ends with a score in the top 10 of its level, you can sign the golden book (your nickname is filled in) and add a comment. Anyone can read it from the main menu. It is shared by everyone playing on the same server.
+
+### Two pilots
+
+Choose "2 pilots" on the setup screen to share the keyboard with a friend, in one of two modes:
+
+- **Team:** one shared score, and slightly more aliens (one more at a time, arriving a quarter sooner). The game ends when both pilots are out of ships. Top scores go to a separate "Two pilots" golden book, signed as "Ada & Bob".
+- **Versus:** each pilot has their own score, and shooting down the other pilot is worth 300 points. The game ends as soon as one pilot is out of ships, and the higher score wins. Versus games don't go in the golden book.
+
+In both modes missiles and collisions hurt both pilots, just like for aliens, who hunt whichever pilot is closest.
 
 ### Levels
 
@@ -38,7 +51,7 @@ npm start        # http://localhost:8080 (golden book in ./data/goldenbook.txt)
 npm test
 ```
 
-The game is plain JavaScript ES modules served as static files (`public/`), with no build step. Tuning values are at the top of `public/js/main.js` and in `public/js/levels.js`; the sprites are SVG files in `public/sprites/` and can be swapped freely.
+The game is plain JavaScript ES modules served as static files (`public/`), with no build step. Tuning values are at the top of `public/js/main.js` and in `public/js/levels.js`; the sprites are SVG files in `public/sprites/` and can be swapped freely (ship designs are listed in `public/js/pilots.js`).
 
 ## Production (Docker Compose)
 

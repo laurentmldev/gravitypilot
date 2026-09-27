@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Raven: forward-swept wings. Nose points right (angle 0). -->
+  <path d="M60 32 L30 24 L40 8 L30 8 L14 26 L8 32 L14 38 L30 56 L40 56 L30 40 Z" fill="#ffe0f6" stroke="#ff5cc8" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M46 32 L28 28 L24 32 L28 36 Z" fill="#b8338f"/>
+  <circle cx="38" cy="32" r="3.5" fill="#ffc2ec"/>
+</svg>

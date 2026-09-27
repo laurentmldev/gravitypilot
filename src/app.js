@@ -19,7 +19,8 @@ export function createApp({ goldenBookFile = process.env.GOLDENBOOK_FILE || path
 
   app.get('/api/goldenbook', (req, res) => {
     res.set('Cache-Control', 'no-store');
-    res.json({ levels: book.top() });
+    // `levels` (the solo book) is kept for older clients.
+    res.json({ levels: book.top('solo'), books: book.all() });
   });
 
   app.post('/api/goldenbook', express.json({ limit: '2kb' }), async (req, res, next) => {
@@ -36,7 +37,7 @@ export function createApp({ goldenBookFile = process.env.GOLDENBOOK_FILE || path
       times.push(now);
       if (recent.size > 10_000) recent.clear();
       recent.set(req.ip, times);
-      res.status(201).json({ rank, levels: book.top() });
+      res.status(201).json({ rank, levels: book.top(entry.mode), books: book.all() });
     } catch (err) {
       next(err);
     }

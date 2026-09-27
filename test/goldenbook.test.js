@@ -83,3 +83,27 @@ test('submissions are rate limited per client', async (t) => {
   assert.equal((await post({ level: 3, score: 99, nickname: 'spam' }, '10.9.9.9')).status, 429);
   assert.equal((await post({ level: 3, score: 99, nickname: 'other' }, '10.9.9.8')).status, 201);
 });
+
+test('two-pilot team games have their own book', async (t) => {
+  const { file, base, post } = await start(t);
+  let res = await post({ mode: 'duo', level: 4, score: 900, nickname: 'Ada & Bob', comment: 'teamwork' }, '10.1.0.1');
+  assert.equal(res.status, 201);
+  assert.equal((await res.json()).rank, 1);
+  res = await post({ level: 4, score: 100, nickname: 'Solo' }, '10.1.0.2');
+  assert.equal((await res.json()).rank, 1, 'the solo book is separate');
+  assert.equal((await post({ mode: 'versus', level: 4, score: 5, nickname: 'x' }, '10.1.0.3')).status, 400);
+
+  const body = await (await fetch(base)).json();
+  assert.deepEqual(body.books.duo[4].map((e) => e.nickname), ['Ada & Bob']);
+  assert.deepEqual(body.books.solo[4].map((e) => e.nickname), ['Solo']);
+  assert.deepEqual(body.levels, body.books.solo);
+
+  // Entries written before modes existed count as solo.
+  fs.appendFileSync(file, `${JSON.stringify({ level: 1, score: 50, nickname: 'Old', comment: '', date: '2026-01-01T00:00:00.000Z' })}\n`);
+  const again = createApp({ goldenBookFile: file }).listen(0);
+  t.after(() => again.close());
+  await new Promise((r) => again.once('listening', r));
+  const reloaded = await (await fetch(`http://127.0.0.1:${again.address().port}/api/goldenbook`)).json();
+  assert.equal(reloaded.books.solo[1][0].nickname, 'Old');
+  assert.equal(reloaded.books.duo[1].length, 0);
+});

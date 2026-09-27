@@ -1,8 +1,19 @@
 import { stepBodies, wrapPosition, delta, distance, circularSpeed } from './physics.js';
 import { LEVELS, ASTEROID_SIZES } from './levels.js';
 import { SHIP, MISSILE, steer, missileLaunch } from './ship.js';
-import { createPilot, pilot } from './ai.js';
+import { createPilot, pilot as alienPilot } from './ai.js';
 import { fetchBook, signBook, qualifies, renderBook, showBookError } from './goldenbook.js';
+import {
+  SHIPS,
+  KEYSETS,
+  STYLES,
+  NAME_MAX,
+  shipById,
+  loadSetup,
+  saveSetup,
+  styleOf,
+  validateSetup,
+} from './pilots.js';
 
 // ---------------------------------------------------------------------------
 // Tuning
@@ -16,9 +27,11 @@ const PLAYER = { lives: 3, invulnerable: 2.5 };
 const ALIEN = { score: 250, warpIn: 1.2 };
 const TARGET = { radius: 10, size: 22, score: 100, respawn: 1.5 };
 const TRAIL = { every: 0.04, length: 45 };
+const VERSUS = { score: 300 }; // for shooting down the other pilot
+// Team games get slightly more aliens: one more at a time, arriving sooner.
+const TEAM_ALIENS = { extra: 1, sooner: 0.75 };
 
 const SPRITES = {
-  ship: 'ship.svg',
   flame: 'flame.svg',
   missile: 'missile.svg',
   planetSmall: 'planet-small.svg',
@@ -27,6 +40,7 @@ const SPRITES = {
   asteroid: 'asteroid.svg',
   alien: 'alien.svg',
   target: 'target.svg',
+  ...Object.fromEntries(SHIPS.map((s) => [`ship-${s.id}`, s.file])),
 };
 
 // ---------------------------------------------------------------------------
@@ -62,7 +76,7 @@ function resize() {
       b.y += sy;
       if (b.wrap !== false) wrapPosition(b, world);
     }
-    state.trail = [];
+    for (const p of state.pilots) p.trail = [];
   }
   makeStars();
 }
@@ -129,49 +143,69 @@ function drawWrapped(body, reach, draw) {
   for (const ox of xs) for (const oy of ys) draw(body.x + ox, body.y + oy);
 }
 
+function rgba(hex, alpha) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
+
 // ---------------------------------------------------------------------------
-// Input: keyboard and on-screen buttons
+// Input: keyboard (one layout per pilot) and on-screen buttons (pilot 1)
 // ---------------------------------------------------------------------------
 
-const keys = { left: false, right: false, thrust: false, fire: false };
-const touch = { left: false, right: false, thrust: false, fire: false };
-const input = () => ({
-  left: keys.left || touch.left,
-  right: keys.right || touch.right,
-  thrust: keys.thrust || touch.thrust,
-  fire: keys.fire || touch.fire,
-});
+const blankInput = () => ({ left: false, right: false, thrust: false, fire: false });
+const keys = [blankInput(), blankInput()];
+const touch = blankInput();
 
-const KEYMAP = {
-  ArrowLeft: 'left',
-  KeyA: 'left',
-  ArrowRight: 'right',
-  KeyD: 'right',
-  ArrowUp: 'thrust',
-  KeyW: 'thrust',
-  Space: 'fire',
-};
+function clearKeys() {
+  for (const k of keys) Object.assign(k, blankInput());
+}
+
+/** Which pilot and action a key drives. A lone pilot can use either layout. */
+function keyAction(code) {
+  const count = state?.pilots.length || 1;
+  for (let i = 0; i < KEYSETS.length; i++) {
+    const action = KEYSETS[i].keys[code];
+    if (action) return { pilot: count === 1 ? 0 : i, action };
+  }
+  return null;
+}
+
+function commandsFor(index) {
+  const k = keys[index];
+  const t = index === 0 ? touch : blankInput();
+  return {
+    left: k.left || t.left,
+    right: k.right || t.right,
+    thrust: k.thrust || t.thrust,
+    fire: k.fire || t.fire,
+  };
+}
 
 window.addEventListener('keydown', (e) => {
-  // Typing a nickname or comment must not steer the ship or restart the game.
+  // Typing a nickname or comment must not steer a ship or restart the game.
   if (e.target.closest && e.target.closest('input, textarea')) return;
   if (bookReturn) {
     if (e.code === 'Escape') closeBook();
     return;
   }
-  const action = KEYMAP[e.code];
-  if (action) {
-    keys[action] = true;
+  if (isShown('setup')) {
+    if (e.code === 'Escape') showMenu(setupLevel);
+    else if (e.code === 'Enter' && !e.target.closest('button')) setupForm.requestSubmit();
+    return;
+  }
+  const hit = keyAction(e.code);
+  if (hit) {
+    keys[hit.pilot][hit.action] = true;
     e.preventDefault();
   }
   if (e.repeat) return;
 
   if (state.mode === 'menu') {
     const n = Number(e.key);
-    if (n >= 1 && n <= LEVELS.length) startGame(n - 1);
-    else if (e.code === 'Enter') startGame(state.levelIndex);
+    if (n >= 1 && n <= LEVELS.length) openSetup(n - 1);
+    else if (e.code === 'Enter') openSetup(state.levelIndex);
   } else if (state.mode === 'gameover') {
-    if (e.code === 'Enter' || e.code === 'Space') startGame(state.levelIndex);
+    if (e.code === 'Enter') startGame(state.levelIndex);
     else if (e.code === 'Escape' || e.code === 'KeyM') showMenu();
   } else if (e.code === 'KeyP' || e.code === 'Escape') {
     togglePause();
@@ -179,12 +213,12 @@ window.addEventListener('keydown', (e) => {
 });
 
 window.addEventListener('keyup', (e) => {
-  const action = KEYMAP[e.code];
-  if (action) keys[action] = false;
+  const hit = keyAction(e.code);
+  if (hit) keys[hit.pilot][hit.action] = false;
 });
 
 window.addEventListener('blur', () => {
-  Object.keys(keys).forEach((k) => (keys[k] = false));
+  clearKeys();
   if (state.mode === 'playing') togglePause();
 });
 
@@ -221,53 +255,58 @@ for (const btn of touchPanel.querySelectorAll('button')) {
 // ---------------------------------------------------------------------------
 
 let state = null;
+let setup = loadSetup();
 
 const rand = (a, b) => a + Math.random() * (b - a);
 
 function allBodies() {
   const s = state;
-  return [
-    ...s.massive,
-    ...s.asteroids,
-    ...ships(),
-    ...s.missiles,
-    ...s.targets,
-    ...s.particles,
-  ];
+  return [...s.massive, ...s.asteroids, ...ships(), ...s.missiles, ...s.targets, ...s.particles];
 }
 
-/** Every ship in play: the player (if alive) and the aliens. */
+/** Ships flown by the pilots that are currently in play. */
+function pilotShips() {
+  return state.pilots.filter((p) => p.ship).map((p) => p.ship);
+}
+
+/** Every ship in play: the pilots' and the aliens'. */
 function ships() {
-  return state.ship ? [state.ship, ...state.aliens] : [...state.aliens];
+  return [...pilotShips(), ...state.aliens];
 }
 
-function buildWorld(levelIndex) {
+/** Build a level. With `play` = null this is the empty preview behind the menu. */
+function buildWorld(levelIndex, play = null) {
   const level = LEVELS[levelIndex];
   const cx = world.w / 2;
   const cy = world.h / 2;
+  const style = play ? styleOf(play) : 'solo';
+  const aliens = { ...level.aliens };
+  if (style === 'team') {
+    aliens.max += TEAM_ALIENS.extra;
+    aliens.first = aliens.first.map((t) => t * TEAM_ALIENS.sooner);
+    aliens.every = aliens.every.map((t) => t * TEAM_ALIENS.sooner);
+  }
   const s = {
     level,
     levelIndex,
+    style,
+    aliensRule: aliens,
     mode: 'menu',
+    pilots: [],
     massive: [],
     planet: null,
     moon: null,
-    ship: null,
     aliens: [],
     missiles: [],
     asteroids: [],
     targets: [],
     particles: [],
-    trail: [],
-    trailTimer: 0,
-    score: 0,
-    lives: PLAYER.lives,
+    teamScore: 0, // solo and team games share one score
     time: 0,
-    respawnTimer: 0,
-    gameoverTimer: 0,
+    endTimer: null,
     targetTimers: [],
     asteroidTimer: level.asteroids ? rand(...level.asteroids.every) : 0,
-    alienTimer: rand(...level.aliens.first),
+    alienTimer: rand(...aliens.first),
   };
 
   if (level.planet) {
@@ -284,14 +323,32 @@ function buildWorld(levelIndex) {
     p.vx = -(v * m.mass) / total;
     s.massive.push(s.moon);
   }
+
+  if (play) {
+    for (let i = 0; i < play.count; i++) {
+      const design = shipById(play.ships[i]);
+      s.pilots.push({
+        index: i,
+        name: play.names[i].trim(),
+        sprite: `ship-${design.id}`,
+        color: design.color,
+        ship: null,
+        lives: PLAYER.lives,
+        score: 0, // used in versus games
+        respawnTimer: 0,
+        trail: [],
+        trailTimer: 0,
+      });
+    }
+  }
   return s;
 }
 
-function startGame(levelIndex) {
-  state = buildWorld(levelIndex);
+function startGame(levelIndex, play = setup) {
+  state = buildWorld(levelIndex, play);
   state.mode = 'playing';
-  Object.keys(keys).forEach((k) => (keys[k] = false));
-  spawnShip();
+  clearKeys();
+  for (const p of state.pilots) spawnShip(p);
   for (let i = 0; i < state.level.targets; i++) spawnTarget();
   showOverlay(null);
   document.getElementById('hud').hidden = false;
@@ -317,27 +374,30 @@ function togglePause() {
   }
 }
 
-function spawnPoint() {
+/** Pilot 1 starts on the left, pilot 2 on the right, both orbiting the same way. */
+function spawnPoint(index) {
   const s = state;
+  const side = index === 0 ? -1 : 1;
   if (s.planet) {
     const r = s.level.shipOrbit;
     const v = circularSpeed(s.planet.mass, r);
     return {
-      x: s.planet.x - r,
+      x: s.planet.x + side * r,
       y: s.planet.y,
       vx: s.planet.vx,
-      vy: s.planet.vy - v, // same direction as the moon
-      angle: -Math.PI / 2,
+      vy: s.planet.vy + side * v, // same direction as the moon
+      angle: (side * Math.PI) / 2,
     };
   }
-  return { x: world.w * 0.3, y: world.h / 2, vx: 0, vy: 0, angle: 0 };
+  return { x: world.w * (index === 0 ? 0.3 : 0.7), y: world.h / 2, vx: 0, vy: 0, angle: index === 0 ? 0 : Math.PI };
 }
 
-function spawnShip() {
-  const p = spawnPoint();
+function spawnShip(pilot) {
+  const p = spawnPoint(pilot.index);
   wrapPosition(p, world);
-  state.ship = {
+  pilot.ship = {
     kind: 'ship',
+    crew: pilot,
     ...p,
     ax: 0,
     ay: 0,
@@ -347,12 +407,12 @@ function spawnShip() {
     fireCooldown: 0,
     invulnerable: PLAYER.invulnerable,
   };
-  state.trail = [];
+  pilot.trail = [];
 }
 
-function isSpawnClear() {
-  const p = spawnPoint();
-  const hazards = [...state.asteroids, ...state.aliens, ...state.missiles, ...(state.moon ? [state.moon] : [])];
+function isSpawnClear(pilot) {
+  const p = spawnPoint(pilot.index);
+  const hazards = [...state.asteroids, ...ships(), ...state.missiles, ...(state.moon ? [state.moon] : [])];
   return hazards.every((h) => distance(p, h, world) > h.radius + 90);
 }
 
@@ -378,7 +438,7 @@ function spawnTarget() {
     let tries = 0;
     do {
       t = { x: rand(0, world.w), y: rand(0, world.h) };
-    } while (s.ship && distance(t, s.ship, world) < 220 && ++tries < 30);
+    } while (pilotShips().some((sh) => distance(t, sh, world) < 220) && ++tries < 30);
     const a = rand(0, Math.PI * 2);
     const v = rand(5, 25);
     t.vx = Math.cos(a) * v;
@@ -426,7 +486,7 @@ function fireMissile(ship) {
   state.missiles.push(m);
 }
 
-/** Pilot commands, identical for the player and the aliens. */
+/** Pilot commands, identical for the players and the aliens. */
 function command(ship, cmd, dt) {
   steer(ship, cmd, dt);
   ship.fireCooldown -= dt;
@@ -439,12 +499,12 @@ function command(ship, cmd, dt) {
 
 function spawnAlien() {
   const s = state;
-  // Appear somewhere clear: away from the player, planets, moons and rocks.
+  // Appear somewhere clear: away from the pilots, planets, moons and rocks.
   let spot = null;
   for (let tries = 0; tries < 40 && !spot; tries++) {
     const c = { x: rand(0, world.w), y: rand(0, world.h) };
     const clear =
-      (!s.ship || distance(c, s.ship, world) > 350) &&
+      pilotShips().every((sh) => distance(c, sh, world) > 350) &&
       s.massive.every((b) => distance(c, b, world) > b.radius + 150) &&
       [...s.asteroids, ...s.aliens].every((b) => distance(c, b, world) > 120);
     if (clear) spot = c;
@@ -482,17 +542,32 @@ function explode(x, y, count, color, speed = 120) {
 // Simulation
 // ---------------------------------------------------------------------------
 
+function nearestPilotShip(from) {
+  let best = null;
+  let bestD = Infinity;
+  for (const sh of pilotShips()) {
+    const d = distance(from, sh, world);
+    if (d < bestD) {
+      bestD = d;
+      best = sh;
+    }
+  }
+  return best;
+}
+
 function update(dt) {
   const s = state;
   if (s.mode === 'paused') return;
   s.time += dt;
   const playing = s.mode === 'playing';
 
-  // Pilots: the player's buttons, and the alien autopilots
-  const ship = s.ship;
-  if (ship && playing) {
-    command(ship, input(), dt);
-    ship.invulnerable = Math.max(0, ship.invulnerable - dt);
+  // Pilots: the players' buttons, and the alien autopilots
+  if (playing) {
+    for (const p of s.pilots) {
+      if (!p.ship) continue;
+      command(p.ship, commandsFor(p.index), dt);
+      p.ship.invulnerable = Math.max(0, p.ship.invulnerable - dt);
+    }
   }
   if (s.aliens.length) {
     const view = {
@@ -501,16 +576,17 @@ function update(dt) {
       solids: s.massive,
       missiles: s.missiles,
       ships: ships(),
-      target: playing ? ship : null,
+      target: null,
     };
     for (const a of s.aliens) {
       a.warp = Math.max(0, a.warp - dt);
-      command(a, pilot(a, view, dt), dt);
+      view.target = playing ? nearestPilotShip(a) : null; // hunt the closest pilot
+      command(a, alienPilot(a, view, dt), dt);
     }
   }
 
   // Gravity: planet, moon and asteroids attract everything (and each other);
-  // the ship, missiles and beacons are too light to attract anything.
+  // ships, missiles and beacons are too light to attract anything.
   const sources = [...s.massive, ...s.asteroids];
   const bodies = [...sources, ...ships(), ...s.missiles, ...s.targets];
   stepBodies(bodies, sources, world, dt);
@@ -559,29 +635,38 @@ function update(dt) {
   // Alien ships appear from time to time
   s.alienTimer -= dt;
   if (s.alienTimer <= 0) {
-    if (s.aliens.length < s.level.aliens.max) spawnAlien();
-    s.alienTimer = rand(...s.level.aliens.every);
+    if (s.aliens.length < s.aliensRule.max) spawnAlien();
+    s.alienTimer = rand(...s.aliensRule.every);
   }
 
-  // Ship trail
-  if (s.ship) {
-    s.trailTimer -= dt;
-    if (s.trailTimer <= 0) {
-      s.trail.push({ x: s.ship.x, y: s.ship.y });
-      if (s.trail.length > TRAIL.length) s.trail.shift();
-      s.trailTimer = TRAIL.every;
+  // Ship trails
+  for (const p of s.pilots) {
+    if (!p.ship) continue;
+    p.trailTimer -= dt;
+    if (p.trailTimer <= 0) {
+      p.trail.push({ x: p.ship.x, y: p.ship.y });
+      if (p.trail.length > TRAIL.length) p.trail.shift();
+      p.trailTimer = TRAIL.every;
     }
   }
 
-  // Respawn / game over
-  if (!ship && playing) {
-    if (s.lives > 0) {
-      s.respawnTimer -= dt;
-      if (s.respawnTimer <= 0 && isSpawnClear()) spawnShip();
-    } else {
-      s.gameoverTimer -= dt;
-      if (s.gameoverTimer <= 0) gameOver();
-    }
+  if (!playing) return;
+
+  // Respawns
+  for (const p of s.pilots) {
+    if (p.ship || p.lives <= 0) continue;
+    p.respawnTimer -= dt;
+    if (p.respawnTimer <= 0 && isSpawnClear(p)) spawnShip(p);
+  }
+
+  // Game over: in versus as soon as one pilot is out of ships, otherwise
+  // when every pilot is.
+  const out = (p) => !p.ship && p.lives <= 0;
+  const over = s.style === 'versus' ? s.pilots.some(out) : s.pilots.every(out);
+  if (over) {
+    if (s.endTimer === null) s.endTimer = 1.8;
+    s.endTimer -= dt;
+    if (s.endTimer <= 0) gameOver();
   }
 }
 
@@ -591,8 +676,9 @@ function hit(a, b) {
   return d < a.radius + b.radius;
 }
 
-function byPlayer(m) {
-  return m.owner && m.owner.kind === 'ship';
+/** The pilot who fired a missile, or null for an alien's missile. */
+function shooter(m) {
+  return m.owner && m.owner.kind === 'ship' ? m.owner.crew : null;
 }
 
 /** Missiles can hit any ship, including the one that fired them once armed. */
@@ -615,7 +701,7 @@ function handleCollisions() {
     const t = s.targets.find((t) => !t.dead && hit(m, t));
     if (t) {
       m.dead = t.dead = true;
-      if (byPlayer(m)) addScore(TARGET.score);
+      addScore(shooter(m), TARGET.score);
       explode(t.x, t.y, 20, '#7dff9b', 140);
       continue;
     }
@@ -623,19 +709,22 @@ function handleCollisions() {
     if (a) {
       m.dead = true;
       destroyAsteroid(a, m);
-      if (byPlayer(m)) addScore(ASTEROID_SIZES[a.size].score);
+      addScore(shooter(m), ASTEROID_SIZES[a.size].score);
       continue;
     }
     const alien = s.aliens.find((al) => !al.dead && missileHitsShip(m, al));
     if (alien) {
       m.dead = true;
       killAlien(alien);
-      if (byPlayer(m)) addScore(ALIEN.score);
+      addScore(shooter(m), ALIEN.score);
       continue;
     }
-    if (s.ship && !s.ship.invulnerable && missileHitsShip(m, s.ship)) {
+    const victim = s.pilots.find((p) => p.ship && !p.ship.invulnerable && missileHitsShip(m, p.ship));
+    if (victim) {
       m.dead = true;
-      killShip();
+      const by = shooter(m);
+      if (s.style === 'versus' && by && by !== victim) addScore(by, VERSUS.score);
+      killShip(victim);
     }
   }
 
@@ -665,16 +754,20 @@ function handleCollisions() {
     if (rock || other || solids.some((b) => hit(al, b))) killAlien(al);
   }
 
-  // Player ship. Respawn protection covers rocks, missiles and aliens, but
-  // planets and moons are always solid.
-  const ship = s.ship;
-  if (ship) {
+  // Pilots' ships. Respawn protection covers rocks, missiles and other ships,
+  // but planets and moons are always solid.
+  for (const p of s.pilots) {
+    const ship = p.ship;
+    if (!ship) continue;
     const crashed = solids.some((b) => hit(ship, b));
-    const rock = !ship.invulnerable && s.asteroids.find((a) => !a.dead && hit(ship, a));
-    const alien = !ship.invulnerable && s.aliens.find((a) => !a.dead && hit(ship, a));
+    const shielded = ship.invulnerable > 0;
+    const rock = !shielded && s.asteroids.find((a) => !a.dead && hit(ship, a));
+    const alien = !shielded && s.aliens.find((a) => !a.dead && hit(ship, a));
+    const mate = !shielded && s.pilots.find((o) => o !== p && o.ship && !o.ship.invulnerable && hit(ship, o.ship));
     if (rock) destroyAsteroid(rock, ship);
     if (alien) killAlien(alien);
-    if (crashed || rock || alien) killShip();
+    if (mate) killShip(mate);
+    if (crashed || rock || alien || mate) killShip(p);
   }
 }
 
@@ -706,30 +799,51 @@ function destroyAsteroid(a, by) {
   }
 }
 
-function killShip() {
-  const s = state;
-  if (!s.ship) return;
-  explode(s.ship.x, s.ship.y, 40, '#ffb14a', 180);
-  explode(s.ship.x, s.ship.y, 20, '#dfe8f5', 100);
-  s.ship = null;
-  s.trail = [];
-  s.lives -= 1;
-  s.respawnTimer = 2;
-  s.gameoverTimer = 1.8;
+function killShip(pilot) {
+  const ship = pilot.ship;
+  if (!ship) return;
+  explode(ship.x, ship.y, 40, '#ffb14a', 180);
+  explode(ship.x, ship.y, 20, pilot.color, 100);
+  pilot.ship = null;
+  pilot.trail = [];
+  pilot.lives -= 1;
+  pilot.respawnTimer = 2;
   updateHud();
 }
 
-function addScore(points) {
-  state.score += points;
+/** Points go to the shooting pilot in versus, to the shared score otherwise. */
+function addScore(pilot, points) {
+  if (!pilot) return; // aliens don't score
+  if (state.style === 'versus') pilot.score += points;
+  else state.teamScore += points;
   updateHud();
+}
+
+// ---------------------------------------------------------------------------
+// Game over
+// ---------------------------------------------------------------------------
+
+/** "Ada & Bob" for a team, the nickname for a solo pilot. */
+function crewName(s) {
+  return s.pilots.map((p) => p.name).join(' & ');
 }
 
 function gameOver() {
   const s = state;
   s.mode = 'gameover';
-  const best = saveBest(s.levelIndex, s.score);
-  document.getElementById('gameover-score').textContent =
-    s.score >= best && s.score > 0 ? `New best: ${s.score}` : `Score ${s.score} · Best ${best}`;
+  const title = document.getElementById('gameover-title');
+  const line = document.getElementById('gameover-score');
+  if (s.style === 'versus') {
+    const [a, b] = s.pilots;
+    title.textContent = a.score === b.score ? 'Draw!' : `${(a.score > b.score ? a : b).name} wins!`;
+    line.textContent = `${a.name} ${a.score} · ${b.name} ${b.score}`;
+  } else {
+    const best = saveBest(s.levelIndex, s.style, s.teamScore);
+    title.textContent = 'Game over';
+    const label = s.style === 'team' ? 'Team score' : 'Score';
+    line.textContent =
+      s.teamScore >= best && s.teamScore > 0 ? `New best: ${s.teamScore}` : `${label} ${s.teamScore} · Best ${best}`;
+  }
   touchPanel.classList.remove('active');
   showOverlay('gameover');
   offerGoldenBook(s);
@@ -745,31 +859,32 @@ const entryDone = document.getElementById('entry-done');
 let pendingEntry = null;
 let bookReturn = null; // overlay to go back to when the golden book closes
 
-/** After a game, ask for a nickname if the score makes the level's top 10. */
+/** After a game, offer to sign if the score makes the level's top 10. */
 async function offerGoldenBook(s) {
   entryForm.hidden = true;
   entryDone.hidden = true;
   pendingEntry = null;
-  if (s.score <= 0) return;
+  const book = STYLES[s.style].book; // versus games have no golden book
+  if (!book || s.teamScore <= 0) return;
   const game = s;
-  let book;
+  let books;
   try {
-    book = await fetchBook();
+    books = await fetchBook();
   } catch {
     return; // no server-side book (e.g. offline): just skip it
   }
-  if (state !== game || !qualifies(book[game.level.id] || [], game.score)) return;
-  pendingEntry = { level: game.level.id, score: game.score };
+  if (state !== game || !qualifies(books[book]?.[game.level.id] || [], game.teamScore)) return;
+  pendingEntry = { mode: book, level: game.level.id, score: game.teamScore };
   entryError.hidden = true;
+  entryForm.querySelector('.made-it').textContent =
+    game.pilots.length > 1 ? 'Your team made the top 10! Sign the golden book.' : 'You made the top 10! Sign the golden book.';
   entryForm.hidden = false;
   const nick = document.getElementById('entry-nickname');
-  try {
-    nick.value = localStorage.getItem('gravitypilot.nickname') || '';
-  } catch {
-    /* storage unavailable */
-  }
-  document.getElementById('entry-comment').value = '';
-  nick.focus();
+  nick.value = crewName(game); // the nicknames registered before the game
+  nick.maxLength = book === 'duo' ? 2 * NAME_MAX + 3 : NAME_MAX;
+  const comment = document.getElementById('entry-comment');
+  comment.value = '';
+  comment.focus();
 }
 
 entryForm.addEventListener('submit', async (e) => {
@@ -781,19 +896,14 @@ entryForm.addEventListener('submit', async (e) => {
   const button = entryForm.querySelector('button');
   button.disabled = true;
   try {
-    const { rank, levels } = await signBook({ ...pendingEntry, nickname, comment });
-    try {
-      localStorage.setItem('gravitypilot.nickname', nickname);
-    } catch {
-      /* storage unavailable */
-    }
-    const level = pendingEntry.level;
-    const mine = levels[level][rank - 1];
+    const { rank, books } = await signBook({ ...pendingEntry, nickname, comment });
+    const { mode, level } = pendingEntry;
+    const mine = books[mode][level][rank - 1];
     pendingEntry = null;
     entryForm.hidden = true;
-    entryDone.textContent = `Signed! You are #${rank} in the golden book.`;
+    entryDone.textContent = `Signed! ${mode === 'duo' ? 'Your team is' : 'You are'} #${rank} in the golden book.`;
     entryDone.hidden = false;
-    openBook(levels, level, mine);
+    openBook(books, { mode, level, mine });
   } catch (err) {
     entryError.textContent = err.message;
     entryError.hidden = false;
@@ -810,16 +920,17 @@ document.getElementById('entry-comment').addEventListener('keydown', (e) => {
   }
 });
 
-async function openBook(levels = null, levelId = state.level.id, mine = null) {
-  bookReturn = overlays.find((id) => !document.getElementById(id).hidden) || 'menu';
+async function openBook(books = null, view = null) {
+  bookReturn = overlays.find((id) => isShown(id)) || 'menu';
   showOverlay('book');
-  if (levels) {
-    renderBook(levels, levelId, mine);
+  const where = view || { mode: state.style === 'team' ? 'duo' : 'solo', level: state.level.id, mine: null };
+  if (books) {
+    renderBook(books, where);
     return;
   }
-  renderBook({}, levelId, null);
+  renderBook({}, where);
   try {
-    renderBook(await fetchBook(), levelId, null);
+    renderBook(await fetchBook(), where);
   } catch (err) {
     showBookError(`The golden book is unavailable right now (${err.message}).`);
   }
@@ -831,21 +942,26 @@ function closeBook() {
 }
 
 // ---------------------------------------------------------------------------
-// Best scores (per level, kept in the browser)
+// Best scores (per level and play style, kept in the browser)
 // ---------------------------------------------------------------------------
 
-function getBest(levelIndex) {
+function bestKey(levelIndex, style) {
+  const id = LEVELS[levelIndex].id;
+  return style === 'team' ? `gravitypilot.best.team.${id}` : `gravitypilot.best.${id}`;
+}
+
+function getBest(levelIndex, style = 'solo') {
   try {
-    return Number(localStorage.getItem(`gravitypilot.best.${LEVELS[levelIndex].id}`)) || 0;
+    return Number(localStorage.getItem(bestKey(levelIndex, style))) || 0;
   } catch {
     return 0;
   }
 }
 
-function saveBest(levelIndex, score) {
-  const best = Math.max(getBest(levelIndex), score);
+function saveBest(levelIndex, style, score) {
+  const best = Math.max(getBest(levelIndex, style), score);
   try {
-    localStorage.setItem(`gravitypilot.best.${LEVELS[levelIndex].id}`, String(best));
+    localStorage.setItem(bestKey(levelIndex, style), String(best));
   } catch {
     /* storage unavailable */
   }
@@ -855,6 +971,22 @@ function saveBest(levelIndex, score) {
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
+
+function drawTrail(trail, color) {
+  if (trail.length < 2) return;
+  ctx.lineWidth = 1.5;
+  for (let i = 1; i < trail.length; i++) {
+    const a = trail[i - 1];
+    const b = trail[i];
+    // Broken where the ship wrapped around an edge
+    if (Math.abs(a.x - b.x) > world.w / 2 || Math.abs(a.y - b.y) > world.h / 2) continue;
+    ctx.strokeStyle = rgba(color, (i / trail.length) * 0.5);
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+  }
+}
 
 function render() {
   const s = state;
@@ -869,20 +1001,7 @@ function render() {
   }
   ctx.globalAlpha = 1;
 
-  // Trail, broken where the ship wrapped around an edge
-  if (s.trail.length > 1) {
-    ctx.lineWidth = 1.5;
-    for (let i = 1; i < s.trail.length; i++) {
-      const a = s.trail[i - 1];
-      const b = s.trail[i];
-      if (Math.abs(a.x - b.x) > world.w / 2 || Math.abs(a.y - b.y) > world.h / 2) continue;
-      ctx.strokeStyle = `rgba(106, 169, 255, ${(i / s.trail.length) * 0.5})`;
-      ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
-      ctx.stroke();
-    }
-  }
+  for (const p of s.pilots) drawTrail(p.trail, p.color);
 
   for (const b of s.massive) {
     // Soft atmosphere glow
@@ -913,9 +1032,20 @@ function render() {
     drawWrapped(a, SHIP.size / 2, (x, y) => drawShip(a, 'alien', x, y, alpha));
   }
 
-  const ship = s.ship;
-  if (ship && !(ship.invulnerable && Math.floor(ship.invulnerable * 8) % 2)) {
-    drawWrapped(ship, SHIP.size / 2, (x, y) => drawShip(ship, 'ship', x, y));
+  const labels = s.pilots.length > 1;
+  for (const p of s.pilots) {
+    const ship = p.ship;
+    if (!ship || (ship.invulnerable && Math.floor(ship.invulnerable * 8) % 2)) continue;
+    drawWrapped(ship, SHIP.size / 2, (x, y) => {
+      drawShip(ship, p.sprite, x, y);
+      if (labels) {
+        // Name tags tell the two pilots apart.
+        ctx.font = '600 12px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = p.color;
+        ctx.fillText(p.name, x, y - SHIP.size * 0.75);
+      }
+    });
   }
 
   for (const p of s.particles) {
@@ -930,22 +1060,40 @@ function render() {
 // DOM overlays and HUD
 // ---------------------------------------------------------------------------
 
-const overlays = ['menu', 'paused', 'gameover', 'book'];
+const overlays = ['menu', 'setup', 'paused', 'gameover', 'book'];
 function showOverlay(name) {
   for (const id of overlays) document.getElementById(id).hidden = id !== name;
+}
+function isShown(id) {
+  return !document.getElementById(id).hidden;
 }
 
 let hudCache = '';
 function updateHud(force = false) {
   const s = state;
-  const best = Math.max(getBest(s.levelIndex), s.score);
-  const key = `${s.levelIndex}|${s.score}|${s.lives}|${best}`;
+  const versus = s.style === 'versus';
+  const best = versus ? 0 : Math.max(getBest(s.levelIndex, s.style), s.teamScore);
+  const key = JSON.stringify([s.levelIndex, s.style, s.teamScore, best, s.pilots.map((p) => [p.score, p.lives])]);
   if (!force && key === hudCache) return;
   hudCache = key;
   document.getElementById('hud-level').textContent = `${s.level.id}. ${s.level.name}`;
-  document.getElementById('hud-score').textContent = s.score;
+  document.getElementById('hud-score-wrap').hidden = versus;
+  document.getElementById('hud-best-wrap').hidden = versus;
+  document.getElementById('hud-score-label').textContent = s.style === 'team' ? 'Team' : 'Score';
+  document.getElementById('hud-score').textContent = s.teamScore;
   document.getElementById('hud-best').textContent = best;
-  document.getElementById('hud-lives').textContent = '▲'.repeat(Math.max(0, s.lives));
+  document.getElementById('hud-pilots').replaceChildren(
+    ...s.pilots.map((p) => {
+      const el = document.createElement('span');
+      el.className = `hud-pilot${!p.ship && p.lives <= 0 ? ' out' : ''}`;
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.style.background = p.color;
+      const lives = '▲'.repeat(Math.max(0, p.lives));
+      el.append(dot, `${p.name} ${versus ? `${p.score} ` : ''}${lives}`);
+      return el;
+    }),
+  );
 }
 
 function renderLevelList() {
@@ -953,13 +1101,16 @@ function renderLevelList() {
   list.replaceChildren(
     ...LEVELS.map((lvl, i) => {
       const b = document.createElement('button');
-      const best = getBest(i);
+      const best = getBest(i, 'solo');
+      const team = getBest(i, 'team');
+      const bests = [best && `Best ${best}`, team && `Team ${team}`].filter(Boolean).join(' · ');
       b.innerHTML = `<span class="num">LEVEL ${lvl.id}</span>
         <span class="name"></span><span class="desc"></span>
-        ${best ? `<span class="best">Best ${best}</span>` : ''}`;
+        ${bests ? '<span class="best"></span>' : ''}`;
       b.querySelector('.name').textContent = lvl.name;
       b.querySelector('.desc').textContent = lvl.description;
-      b.addEventListener('click', () => startGame(i));
+      if (bests) b.querySelector('.best').textContent = bests;
+      b.addEventListener('click', () => openSetup(i));
       b.addEventListener('mouseenter', () => {
         if (state.levelIndex !== i) state = buildWorld(i); // preview the level behind the menu
       });
@@ -968,6 +1119,118 @@ function renderLevelList() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Pilot setup: nicknames, number of pilots, team or versus, ships
+// ---------------------------------------------------------------------------
+
+const setupForm = document.getElementById('setup-form');
+const setupError = document.getElementById('setup-error');
+let setupLevel = 0;
+
+function openSetup(levelIndex) {
+  setupLevel = levelIndex;
+  if (state.levelIndex !== levelIndex) state = buildWorld(levelIndex);
+  const lvl = LEVELS[levelIndex];
+  document.getElementById('setup-title').textContent = `Level ${lvl.id} · ${lvl.name}`;
+  setupError.hidden = true;
+  renderSetup();
+  showOverlay('setup');
+  const first = setupForm.querySelector('input[name="name"]');
+  if (first && !first.value) first.focus();
+}
+
+function renderSetup() {
+  for (const b of document.querySelectorAll('#setup-count button')) {
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(Number(b.dataset.count) === setup.count));
+  }
+  const modeSeg = document.getElementById('setup-mode');
+  modeSeg.hidden = setup.count === 1;
+  for (const b of modeSeg.querySelectorAll('button')) {
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(b.dataset.mode === setup.mode));
+  }
+  const help = document.getElementById('setup-mode-help');
+  help.hidden = setup.count === 1;
+  help.textContent = STYLES[setup.mode].help;
+  document.getElementById('setup-touch-note').hidden = !(setup.count === 2 && document.body.classList.contains('touch'));
+
+  const holder = document.getElementById('setup-pilots');
+  holder.replaceChildren(
+    ...Array.from({ length: setup.count }, (_, i) => {
+      const box = document.createElement('fieldset');
+      box.className = 'pilot';
+      box.style.setProperty('--pilot', shipById(setup.ships[i]).color);
+      const legend = document.createElement('legend');
+      legend.textContent = setup.count === 1 ? 'Pilot' : `Pilot ${i + 1}`;
+      const name = document.createElement('input');
+      name.name = 'name';
+      name.maxLength = NAME_MAX;
+      name.placeholder = 'Nickname';
+      name.autocomplete = 'off';
+      name.value = setup.names[i];
+      name.setAttribute('aria-label', `${legend.textContent} nickname`);
+      name.addEventListener('input', () => {
+        setup.names[i] = name.value;
+        setupError.hidden = true;
+      });
+      const picker = document.createElement('div');
+      picker.className = 'ship-picker';
+      for (const design of SHIPS) {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.setAttribute('aria-pressed', String(setup.ships[i] === design.id));
+        b.disabled = setup.count === 2 && setup.ships[1 - i] === design.id; // one ship per pilot
+        b.title = design.name;
+        const img = document.createElement('img');
+        img.src = `sprites/${design.file}`;
+        img.alt = '';
+        b.append(img, design.name);
+        b.addEventListener('click', () => {
+          setup.ships[i] = design.id;
+          renderSetup();
+        });
+        picker.append(b);
+      }
+      const help = document.createElement('p');
+      help.className = 'keys';
+      help.textContent = setup.count === 1 ? `${KEYSETS[0].help} (or WASD)` : KEYSETS[i].help;
+      box.append(legend, name, picker, help);
+      return box;
+    }),
+  );
+}
+
+for (const b of document.querySelectorAll('#setup-count button')) {
+  b.addEventListener('click', () => {
+    setup.count = Number(b.dataset.count);
+    if (setup.count === 2 && setup.ships[0] === setup.ships[1]) {
+      setup.ships[1] = SHIPS.find((d) => d.id !== setup.ships[0]).id;
+    }
+    renderSetup();
+  });
+}
+for (const b of document.querySelectorAll('#setup-mode button')) {
+  b.addEventListener('click', () => {
+    setup.mode = b.dataset.mode;
+    renderSetup();
+  });
+}
+
+setupForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  setup.names = setup.names.map((n) => n.trim());
+  const error = validateSetup(setup);
+  if (error) {
+    setupError.textContent = error;
+    setupError.hidden = false;
+    return;
+  }
+  saveSetup(setup);
+  startGame(setupLevel);
+});
+
+document.getElementById('btn-setup-back').addEventListener('click', () => showMenu(setupLevel));
 document.getElementById('btn-pause').addEventListener('click', togglePause);
 document.getElementById('btn-resume').addEventListener('click', togglePause);
 document.getElementById('btn-quit').addEventListener('click', () => showMenu());
@@ -1005,4 +1268,15 @@ showMenu(2);
 loadSprites().then(() => requestAnimationFrame(frame));
 
 // Small hook for automated checks and debugging from the console.
-window.gravityPilot = { get state() { return state; }, world, startGame, showMenu };
+window.gravityPilot = {
+  get state() {
+    return state;
+  },
+  get setup() {
+    return setup;
+  },
+  world,
+  startGame,
+  showMenu,
+  openSetup,
+};

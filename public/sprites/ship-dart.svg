@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Dart: long and narrow. Nose points right (angle 0). -->
+  <path d="M62 32 L20 20 L8 14 L16 32 L8 50 L20 44 Z" fill="#ffe2cf" stroke="#ff8a4c" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M44 32 L24 27 L26 32 L24 37 Z" fill="#e0582a"/>
+  <circle cx="42" cy="32" r="3.5" fill="#fff1c2"/>
+</svg>

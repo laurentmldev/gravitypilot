@@ -5,7 +5,7 @@ import { createPilot, pilot as alienPilot } from './ai.js';
 import { fetchBook, signBook, qualifies, renderBook, showBookError } from './goldenbook.js';
 import {
   SHIPS,
-  KEYSETS,
+  ACTIONS,
   STYLES,
   NAME_MAX,
   shipById,
@@ -13,6 +13,15 @@ import {
   saveSetup,
   styleOf,
   validateSetup,
+  keysOf,
+  isDefaultKeys,
+  resetKeys,
+  actionOf,
+  bindKey,
+  learnKey,
+  detectLayout,
+  keyLabel,
+  keysHelp,
 } from './pilots.js';
 
 // ---------------------------------------------------------------------------
@@ -160,11 +169,11 @@ function clearKeys() {
   for (const k of keys) Object.assign(k, blankInput());
 }
 
-/** Which pilot and action a key drives. A lone pilot can use either layout. */
+/** Which pilot and action a key drives. A lone pilot can also use pilot 2's keys. */
 function keyAction(code) {
   const count = state?.pilots.length || 1;
-  for (let i = 0; i < KEYSETS.length; i++) {
-    const action = KEYSETS[i].keys[code];
+  for (let i = 0; i < 2; i++) {
+    const action = actionOf(keysOf(setup, i), code);
     if (action) return { pilot: count === 1 ? 0 : i, action };
   }
   return null;
@@ -182,6 +191,13 @@ function commandsFor(index) {
 }
 
 window.addEventListener('keydown', (e) => {
+  // Every key press tells us a little more about the keyboard layout.
+  if (learnKey(e.code, e.key)) refreshKeyLabels();
+  if (capture) {
+    e.preventDefault();
+    captureKey(e.code);
+    return;
+  }
   // Typing a nickname or comment must not steer a ship or restart the game.
   if (e.target.closest && e.target.closest('input, textarea')) return;
   if (bookReturn) {
@@ -361,6 +377,7 @@ function showMenu(levelIndex = state ? state.levelIndex : 0) {
   document.getElementById('hud').hidden = true;
   touchPanel.classList.remove('active');
   renderLevelList();
+  refreshKeyLabels();
   showOverlay('menu');
 }
 
@@ -1129,6 +1146,7 @@ let setupLevel = 0;
 
 function openSetup(levelIndex) {
   setupLevel = levelIndex;
+  capture = null;
   if (state.levelIndex !== levelIndex) state = buildWorld(levelIndex);
   const lvl = LEVELS[levelIndex];
   document.getElementById('setup-title').textContent = `Level ${lvl.id} · ${lvl.name}`;
@@ -1192,14 +1210,76 @@ function renderSetup() {
         });
         picker.append(b);
       }
-      const help = document.createElement('p');
-      help.className = 'keys';
-      help.textContent = setup.count === 1 ? `${KEYSETS[0].help} (or WASD)` : KEYSETS[i].help;
-      box.append(legend, name, picker, help);
+      box.append(legend, name, picker, keyMap(i));
       return box;
     }),
   );
 }
+
+// --- Key bindings --------------------------------------------------------
+
+let capture = null; // { pilot, action } while waiting for a key press
+
+function keyMap(i) {
+  const grid = document.createElement('div');
+  grid.className = 'keymap';
+  for (const a of ACTIONS) {
+    const label = document.createElement('span');
+    label.textContent = a.label;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'key';
+    b.dataset.pilot = i;
+    b.dataset.action = a.id;
+    const waiting = capture?.pilot === i && capture.action === a.id;
+    b.classList.toggle('waiting', waiting);
+    b.textContent = waiting ? 'Press a key…' : keysOf(setup, i)[a.id].map(keyLabel).join(' / ');
+    b.setAttribute('aria-label', `${a.label}: ${b.textContent}. Click to change.`);
+    b.addEventListener('click', () => {
+      capture = waiting ? null : { pilot: i, action: a.id };
+      setupError.hidden = true;
+      renderSetup();
+      if (capture) setupForm.querySelector('.key.waiting')?.focus();
+    });
+    grid.append(label, b);
+  }
+  const reset = document.createElement('button');
+  reset.type = 'button';
+  reset.className = 'link';
+  reset.textContent = 'Default keys';
+  reset.hidden = isDefaultKeys(setup, i);
+  reset.addEventListener('click', () => {
+    resetKeys(setup, i);
+    saveSetup(setup);
+    renderSetup();
+  });
+  grid.append(reset);
+  return grid;
+}
+
+function captureKey(code) {
+  const { pilot, action } = capture;
+  capture = null;
+  if (code !== 'Escape') {
+    const error = bindKey(setup, pilot, action, code);
+    setupError.textContent = error || '';
+    setupError.hidden = !error;
+    if (!error) saveSetup(setup);
+  }
+  renderSetup();
+  setupForm.querySelector(`.key[data-pilot="${pilot}"][data-action="${action}"]`)?.focus();
+}
+
+/** Redraw key names once the real keyboard layout is known. */
+function refreshKeyLabels() {
+  document.getElementById('help-p1').textContent = keysHelp(keysOf(setup, 0));
+  document.getElementById('help-p2').textContent = keysHelp(keysOf(setup, 1));
+  for (const b of document.querySelectorAll('.keymap .key:not(.waiting)')) {
+    b.textContent = keysOf(setup, Number(b.dataset.pilot))[b.dataset.action].map(keyLabel).join(' / ');
+  }
+}
+
+detectLayout().then(refreshKeyLabels);
 
 for (const b of document.querySelectorAll('#setup-count button')) {
   b.addEventListener('click', () => {

@@ -8,12 +8,12 @@ Pick a level, then register your nickname and choose one of 5 ships (Arrow, Dart
 
 | Action | Pilot 1 | Pilot 2 | Touch (pilot 1) |
 | --- | --- | --- | --- |
-| Turn left / right | `←` `→` | `A` `D` | ⟲ ⟳ buttons |
-| Engine thrust (while held) | `↑` | `W` | THRUST button |
+| Turn left / right | `←` `→` | `A` `D` (`Q` `D` on AZERTY) | ⟲ ⟳ buttons |
+| Engine thrust (while held) | `↑` | `W` (`Z` on AZERTY) | THRUST button |
 | Fire (hold to keep firing) | `Space` or `↓` | `S` | FIRE button |
 | Pause | `P` or `Esc` | | ❚❚ button |
 
-A lone pilot can use either set of keys.
+A lone pilot can use either set of keys. Keys are bound by position, so pilot 2 flies with WASD on a QWERTY keyboard and ZQSD on an AZERTY one, and the labels on screen follow your layout. Each pilot can change their keys on the setup screen (click a key, then press the new one); `P`, `Esc`, `Enter` and `Tab` are reserved.
 
 - Thrust pushes the ship in the direction it points; when you release it the ship keeps its speed.
 - Leaving the window on one side brings you back on the opposite side.

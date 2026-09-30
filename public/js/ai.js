@@ -5,7 +5,7 @@
 // like the player does.
 
 import { accelerationAt, stepBodies, wrapDelta, wrapPosition } from './physics.js';
-import { SHIP, MISSILE, angleDiff, missileLaunch, turnToward } from './ship.js';
+import { MISSILE, angleDiff, missileLaunch, turnToward, turnRateOf, thrustOf } from './ship.js';
 
 export const PLAN = {
   horizon: 3, // seconds simulated ahead
@@ -71,6 +71,7 @@ export function forecast(self, view) {
     mass: b.mass || 0,
     radius: b.radius,
     wrap: b.wrap,
+    gravity: b.gravity,
   }));
   const sources = clones.slice(0, view.sources.length);
   const meta = tracked.map((b) => ({
@@ -118,17 +119,19 @@ export function simulateShip(self, angle, thrust, fc) {
   let heading = self.angle;
   const path = [{ x: s.x, y: s.y }];
   const dt = PLAN.dt;
+  const turnRate = turnRateOf(self);
+  const power = thrustOf(self);
   for (let k = 0; k < STEPS; k++) {
     const t = k * dt;
     let aligned = true;
     if (angle !== null) {
       const d = angleDiff(angle - heading);
-      const turn = SHIP.turnRate * dt;
+      const turn = turnRate * dt;
       heading += Math.max(-turn, Math.min(turn, d));
       aligned = Math.abs(d) < 0.35;
     }
     const g = accelerationAt(s, frames[k], world);
-    const on = t < thrust && aligned ? SHIP.thrust : 0;
+    const on = t < thrust && aligned ? power : 0;
     s.vx += (g.ax + Math.cos(heading) * on) * dt;
     s.vy += (g.ay + Math.sin(heading) * on) * dt;
     s.x += s.vx * dt;
@@ -138,7 +141,7 @@ export function simulateShip(self, angle, thrust, fc) {
     const next = frames[k + 1];
     for (let i = 0; i < next.length; i++) {
       if (!hazardAt(fc, i, t + dt)) continue;
-      const r = SHIP.radius + fc.meta[i].radius + PLAN.margin;
+      const r = self.radius + fc.meta[i].radius + PLAN.margin;
       if (dist2(s, next[i], world) < r * r) return { hit: t + dt, path, end: s };
     }
   }
@@ -158,8 +161,8 @@ export function simulateMissile(self, angle, fc, targetIdx, selfPath) {
   for (let k = 0; k < STEPS; k++) {
     const t = (k + 1) * dt;
     const g = accelerationAt(m, frames[k], world);
-    m.vx += g.ax * dt;
-    m.vy += g.ay * dt;
+    m.vx += g.ax * MISSILE.gravity * dt;
+    m.vy += g.ay * MISSILE.gravity * dt;
     m.x += m.vx * dt;
     m.y += m.vy * dt;
     wrapPosition(m, world);
@@ -174,7 +177,7 @@ export function simulateMissile(self, angle, fc, targetIdx, selfPath) {
       if (dist2(m, next[i], world) < r * r) return { miss: best, time: t, selfHit: false };
     }
     if (t > MISSILE.armTime && selfPath[k + 1]) {
-      const r = SHIP.radius + MISSILE.radius + 8;
+      const r = self.radius + MISSILE.radius + 8;
       if (dist2(m, selfPath[k + 1], world) < r * r) return { miss: best, time: t, selfHit: true };
     }
   }
@@ -237,7 +240,7 @@ function plan(self, view, p, rng) {
   const dv = Math.hypot(dvx, dvy);
   if (dv > 45) {
     const angle = Math.atan2(dvy, dvx);
-    const thrust = Math.min(dv / SHIP.thrust + 0.1, 1.5);
+    const thrust = Math.min(dv / thrustOf(self) + 0.1, 1.5);
     if (simulateShip(self, angle, thrust, fc).hit === Infinity) {
       p.mode = 'maneuver';
       p.angle = angle;

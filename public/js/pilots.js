@@ -152,7 +152,7 @@ export const NAME_MAX = 20;
 const STORE = 'gravitypilot.setup';
 
 export function defaultSetup() {
-  return { count: 1, mode: 'team', names: ['', ''], ships: ['arrow', 'dart'], keys: [null, null] };
+  return { count: 1, mode: 'team', names: ['', ''], ships: ['arrow', 'dart'], keys: [null, null], tilt: false };
 }
 
 export function loadSetup() {
@@ -170,6 +170,7 @@ export function loadSetup() {
       names: [0, 1].map((i) => String(saved.names?.[i] ?? '').slice(0, NAME_MAX)),
       ships: [0, 1].map((i) => shipById(saved.ships?.[i] ?? d.ships[i]).id),
       keys: [0, 1].map((i) => cleanKeys(saved.keys?.[i])),
+      tilt: saved.tilt === true,
     };
   } catch {
     return d;

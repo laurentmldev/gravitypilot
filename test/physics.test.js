@@ -63,3 +63,12 @@ test('a circular orbit stays circular over several revolutions', () => {
   const d = Math.hypot(sat.x - 2000, sat.y - 2000);
   assert.ok(Math.abs(d - r) / r < 0.01, `radius drifted to ${d}`);
 });
+
+test('a body with a gravity factor is pulled proportionally harder', () => {
+  const world = { w: 1000, h: 1000 };
+  const planet = { x: 500, y: 500, vx: 0, vy: 0, mass: 1e6, radius: 20 };
+  const plain = { x: 700, y: 500, vx: 0, vy: 0, mass: 0 };
+  const heavy = { x: 700, y: 500, vx: 0, vy: 0, mass: 0, gravity: 1.35 };
+  stepBodies([plain, heavy], [planet], world, 0.01);
+  assert.ok(Math.abs(heavy.vx / plain.vx - 1.35) < 1e-9);
+});

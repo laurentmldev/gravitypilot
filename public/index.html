@@ -47,7 +47,13 @@
       </div>
       <p id="setup-mode-help" class="hint"></p>
       <div id="setup-pilots" class="pilots"></div>
-      <p id="setup-touch-note" class="hint" hidden>The second pilot needs a keyboard.</p>
+      <div id="setup-steer-wrap" hidden>
+        <div class="seg" id="setup-steer" role="radiogroup" aria-label="Steering">
+          <button type="button" data-tilt="0">Turn buttons</button>
+          <button type="button" data-tilt="1">Tilt to turn</button>
+        </div>
+        <p class="hint">Tilt: hold the device like a steering wheel and lean it left or right. The level you start at counts as straight.</p>
+      </div>
       <p id="setup-error" class="error" hidden></p>
       <div class="actions">
         <button type="submit" class="primary">Start</button>

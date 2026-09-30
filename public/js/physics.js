@@ -52,14 +52,16 @@ export function accelerationAt(point, sources, world, self = null) {
 /**
  * Advance every body by dt with semi-implicit Euler (symplectic, so orbits
  * stay closed over long runs). Accelerations are all computed before any
- * body moves. A body's own `ax`/`ay` (e.g. engine thrust) is added to gravity.
+ * body moves. A body's own `ax`/`ay` (e.g. engine thrust) is added to gravity,
+ * and its optional `gravity` factor scales how strongly it is pulled.
  * Bodies with `wrap: false` are allowed to leave the window.
  */
 export function stepBodies(bodies, sources, world, dt) {
   const acc = bodies.map((b) => accelerationAt(b, sources, world, b));
   bodies.forEach((b, i) => {
-    b.vx += (acc[i].ax + (b.ax || 0)) * dt;
-    b.vy += (acc[i].ay + (b.ay || 0)) * dt;
+    const g = b.gravity ?? 1;
+    b.vx += (acc[i].ax * g + (b.ax || 0)) * dt;
+    b.vy += (acc[i].ay * g + (b.ay || 0)) * dt;
     b.x += b.vx * dt;
     b.y += b.vy * dt;
     if (b.wrap !== false) wrapPosition(b, world);

@@ -292,6 +292,10 @@ body.touch #touch.active {
   touch-action: none;
 }
 #touch button[data-action="left"], #touch button[data-action="right"] { font-size: 30px; }
+/* Tilt steering replaces the turn buttons once the sensors report. */
+body.tilt-live #touch .pad.left { visibility: hidden; }
+#setup-steer-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+#setup-steer-wrap .hint { margin: 0; max-width: 34em; }
 #touch button.pressed { background: rgba(106, 169, 255, 0.45); border-color: var(--accent); }
 #touch button.fire { border-color: rgba(255, 92, 122, 0.6); }
 #touch button.thrust { border-color: rgba(255, 138, 31, 0.6); }

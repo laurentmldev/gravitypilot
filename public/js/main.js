@@ -1,6 +1,6 @@
 import { stepBodies, wrapPosition, delta, distance, circularSpeed } from './physics.js';
 import { LEVELS, ASTEROID_SIZES } from './levels.js';
-import { SHIP, MISSILE, steer, missileLaunch } from './ship.js';
+import { SHIP, MISSILE, LOCK, steer, missileLaunch, angleDiff, sizeOf } from './ship.js';
 import { createPilot, pilot as alienPilot } from './ai.js';
 import { fetchBook, signBook, qualifies, renderBook, showBookError } from './goldenbook.js';
 import {
@@ -39,6 +39,27 @@ const TRAIL = { every: 0.04, length: 45 };
 const VERSUS = { score: 300 }; // for shooting down the other pilot
 // Team games get slightly more aliens: one more at a time, arriving sooner.
 const TEAM_ALIENS = { extra: 1, sooner: 0.75 };
+// Aliens keep coming faster so a game cannot last forever: the wait between
+// arrivals shrinks as 1 / (1 + t / pace), and one more alien may fly at a
+// time every `extraEvery` seconds (up to `maxExtra` more).
+const RAMP = { pace: 120, extraEvery: 150, maxExtra: 3 };
+// The destroyer: a big, slow alien with a short-range laser that burns
+// asteroids and beacons. It takes 3 hits, and 1 to 3 small aliens escape
+// from its wreck.
+const DESTROYER = {
+  after: 40, // seconds of play before one can show up
+  chance: 0.25, // of an alien arrival being a destroyer
+  radius: 24,
+  size: 76,
+  thrust: 120,
+  turnRate: 2.5,
+  hp: 3,
+  hitScore: 100,
+  score: 600,
+  hurt: 0.4, // seconds of grace after a collision
+  laser: { range: 170, cooldown: 0.9, beam: 0.18 },
+  escape: [1, 3],
+};
 
 const SPRITES = {
   flame: 'flame.svg',
@@ -48,6 +69,7 @@ const SPRITES = {
   moon: 'moon.svg',
   asteroid: 'asteroid.svg',
   alien: 'alien.svg',
+  destroyer: 'destroyer.svg',
   target: 'target.svg',
   ...Object.fromEntries(SHIPS.map((s) => [`ship-${s.id}`, s.file])),
 };
@@ -133,12 +155,13 @@ function drawSprite(name, x, y, size, angle = 0, alpha = 1) {
 }
 
 function drawShip(ship, sprite, x, y, alpha = 1) {
+  const full = sizeOf(ship);
   if (ship.thrusting) {
-    const size = SHIP.size * (0.55 + Math.random() * 0.2);
-    const back = SHIP.size * 0.2 + size * 0.46;
+    const size = full * (0.55 + Math.random() * 0.2);
+    const back = full * 0.2 + size * 0.46;
     drawSprite('flame', x - Math.cos(ship.angle) * back, y - Math.sin(ship.angle) * back, size, ship.angle, alpha);
   }
-  drawSprite(sprite, x, y, SHIP.size, ship.angle, alpha);
+  drawSprite(sprite, x, y, full, ship.angle, alpha);
 }
 
 /** Draw a wrapping body, plus its copies on the far side when it straddles an edge. */
@@ -165,6 +188,61 @@ const blankInput = () => ({ left: false, right: false, thrust: false, fire: fals
 const keys = [blankInput(), blankInput()];
 const touch = blankInput();
 
+// A second pilot needs a keyboard. Phones and tablets without one only offer
+// a single pilot, until a real key press shows that a keyboard is attached.
+const touchOnly = window.matchMedia('(pointer: coarse)').matches && !window.matchMedia('(any-pointer: fine)').matches;
+let keyboardSeen = false;
+const hasKeyboard = () => keyboardSeen || !touchOnly;
+
+// Tilt steering (pilot 1 on phones and tablets): lean the device like a
+// steering wheel. The lean past a small dead zone sets how much of the time
+// the turn command is held, so a gentle lean gives a gentle turn.
+const TILT = { dead: 5, full: 25 }; // degrees
+const tilt = { roll: null, neutral: null, acc: 0 };
+const tiltAvailable = () => 'DeviceOrientationEvent' in window;
+
+/** Sideways lean of the screen in degrees (positive = right edge down), whatever the screen orientation. */
+function screenRoll(e) {
+  const angle = ((screen.orientation?.angle ?? window.orientation ?? 0) + 360) % 360;
+  if (angle === 90) return e.beta;
+  if (angle === 270) return -e.beta;
+  if (angle === 180) return -e.gamma;
+  return e.gamma;
+}
+
+window.addEventListener('deviceorientation', (e) => {
+  if (e.beta == null || e.gamma == null) return;
+  tilt.roll = screenRoll(e);
+  if (tilt.neutral === null) tilt.neutral = tilt.roll;
+  document.body.classList.toggle('tilt-live', !!(state?.tilt));
+});
+
+function recenterTilt() {
+  tilt.neutral = tilt.roll;
+  tilt.acc = 0;
+}
+
+/** Turn commands from the device lean, for one physics step. */
+function tiltTurn() {
+  if (!state.tilt || tilt.roll === null || tilt.neutral === null) return { left: false, right: false };
+  const lean = tilt.roll - tilt.neutral;
+  const duty = Math.max(0, Math.min(1, (Math.abs(lean) - TILT.dead) / (TILT.full - TILT.dead)));
+  tilt.acc += duty;
+  if (tilt.acc < 1) return { left: false, right: false };
+  tilt.acc -= 1;
+  return { left: lean < 0, right: lean > 0 };
+}
+
+async function askTiltPermission() {
+  // iOS asks the player first, and only from a tap.
+  if (typeof DeviceOrientationEvent.requestPermission !== 'function') return true;
+  try {
+    return (await DeviceOrientationEvent.requestPermission()) === 'granted';
+  } catch {
+    return false;
+  }
+}
+
 function clearKeys() {
   for (const k of keys) Object.assign(k, blankInput());
 }
@@ -182,9 +260,10 @@ function keyAction(code) {
 function commandsFor(index) {
   const k = keys[index];
   const t = index === 0 ? touch : blankInput();
+  const lean = index === 0 ? tiltTurn() : { left: false, right: false };
   return {
-    left: k.left || t.left,
-    right: k.right || t.right,
+    left: k.left || t.left || lean.left,
+    right: k.right || t.right || lean.right,
     thrust: k.thrust || t.thrust,
     fire: k.fire || t.fire,
   };
@@ -193,6 +272,13 @@ function commandsFor(index) {
 window.addEventListener('keydown', (e) => {
   // Every key press tells us a little more about the keyboard layout.
   if (learnKey(e.code, e.key)) refreshKeyLabels();
+  // On-screen keyboards type into fields and have no arrow keys: only other
+  // presses prove a real keyboard.
+  const inField = e.target.closest && e.target.closest('input, textarea');
+  if (!keyboardSeen && e.code && (!inField || /^(Arrow|Tab|Escape)/.test(e.code))) {
+    keyboardSeen = true;
+    if (isShown('setup')) renderSetup();
+  }
   if (capture) {
     e.preventDefault();
     captureKey(e.code);
@@ -277,7 +363,7 @@ const rand = (a, b) => a + Math.random() * (b - a);
 
 function allBodies() {
   const s = state;
-  return [...s.massive, ...s.asteroids, ...ships(), ...s.missiles, ...s.targets, ...s.particles];
+  return [...s.massive, ...s.asteroids, ...ships(), ...s.missiles, ...s.targets, ...s.particles, ...s.beams];
 }
 
 /** Ships flown by the pilots that are currently in play. */
@@ -317,6 +403,7 @@ function buildWorld(levelIndex, play = null) {
     asteroids: [],
     targets: [],
     particles: [],
+    beams: [], // destroyer laser shots, drawn for a moment
     teamScore: 0, // solo and team games share one score
     time: 0,
     endTimer: null,
@@ -361,8 +448,12 @@ function buildWorld(levelIndex, play = null) {
 }
 
 function startGame(levelIndex, play = setup) {
+  if (play.count === 2 && !hasKeyboard()) play = { ...play, count: 1 };
   state = buildWorld(levelIndex, play);
   state.mode = 'playing';
+  state.tilt = !!play.tilt && document.body.classList.contains('touch') && tiltAvailable();
+  document.body.classList.toggle('tilt-live', state.tilt && tilt.roll !== null);
+  recenterTilt();
   clearKeys();
   for (const p of state.pilots) spawnShip(p);
   for (let i = 0; i < state.level.targets; i++) spawnTarget();
@@ -374,6 +465,7 @@ function startGame(levelIndex, play = setup) {
 
 function showMenu(levelIndex = state ? state.levelIndex : 0) {
   state = buildWorld(levelIndex);
+  document.body.classList.remove('tilt-live');
   document.getElementById('hud').hidden = true;
   touchPanel.classList.remove('active');
   renderLevelList();
@@ -387,6 +479,7 @@ function togglePause() {
     showOverlay('paused');
   } else if (state.mode === 'paused') {
     state.mode = 'playing';
+    recenterTilt(); // however the device is held now counts as straight
     showOverlay(null);
   }
 }
@@ -498,7 +591,24 @@ function spawnAsteroid(size = 'large', at = null) {
 }
 
 function fireMissile(ship) {
-  const m = { kind: 'missile', ...missileLaunch(ship), radius: MISSILE.radius, mass: 0, life: MISSILE.life, owner: ship };
+  const m = {
+    kind: 'missile',
+    ...missileLaunch(ship),
+    ax: 0,
+    ay: 0,
+    radius: MISSILE.radius,
+    mass: 0,
+    gravity: MISSILE.gravity,
+    life: MISSILE.life,
+    owner: ship,
+    homing: null,
+  };
+  // The first missile fired after a lock is guided; the lock is then spent.
+  if (ship.lock && ship.lock.target && ship.lock.time >= LOCK.time) {
+    m.homing = ship.lock.target;
+    m.homingLeft = LOCK.homing.time;
+    ship.lock = null;
+  }
   wrapPosition(m, world);
   state.missiles.push(m);
 }
@@ -514,36 +624,84 @@ function command(ship, cmd, dt) {
   }
 }
 
-function spawnAlien() {
-  const s = state;
-  // Appear somewhere clear: away from the pilots, planets, moons and rocks.
-  let spot = null;
-  for (let tries = 0; tries < 40 && !spot; tries++) {
-    const c = { x: rand(0, world.w), y: rand(0, world.h) };
-    const clear =
-      pilotShips().every((sh) => distance(c, sh, world) > 350) &&
-      s.massive.every((b) => distance(c, b, world) > b.radius + 150) &&
-      [...s.asteroids, ...s.aliens].every((b) => distance(c, b, world) > 120);
-    if (clear) spot = c;
-  }
-  if (!spot) return;
-  const a = rand(0, Math.PI * 2);
-  s.aliens.push({
+function newAlien(at, destroyer = false) {
+  return {
     kind: 'alien',
-    ...spot,
-    vx: Math.cos(a) * 20,
-    vy: Math.sin(a) * 20,
+    x: at.x,
+    y: at.y,
+    vx: at.vx,
+    vy: at.vy,
     ax: 0,
     ay: 0,
-    angle: rand(0, Math.PI * 2),
+    angle: at.angle ?? rand(0, Math.PI * 2),
     radius: SHIP.radius,
     mass: 0,
     thrusting: false,
     fireCooldown: ALIEN.warpIn, // no shooting while warping in
     warp: ALIEN.warpIn,
     pilot: createPilot(),
-  });
-  explode(spot.x, spot.y, 24, '#c58bff', 90);
+    ...(destroyer && {
+      destroyer: true,
+      radius: DESTROYER.radius,
+      size: DESTROYER.size,
+      thrust: DESTROYER.thrust,
+      turnRate: DESTROYER.turnRate,
+      hp: DESTROYER.hp,
+      hurt: 0,
+      laserCooldown: DESTROYER.laser.cooldown,
+    }),
+  };
+}
+
+function spawnAlien(destroyer = false) {
+  const s = state;
+  // Appear somewhere clear: away from the pilots, planets, moons and rocks.
+  const room = destroyer ? 60 : 0;
+  let spot = null;
+  for (let tries = 0; tries < 40 && !spot; tries++) {
+    const c = { x: rand(0, world.w), y: rand(0, world.h) };
+    const clear =
+      pilotShips().every((sh) => distance(c, sh, world) > 350) &&
+      s.massive.every((b) => distance(c, b, world) > b.radius + 150 + room) &&
+      [...s.asteroids, ...s.aliens].every((b) => distance(c, b, world) > 120 + room);
+    if (clear) spot = c;
+  }
+  if (!spot) return;
+  const a = rand(0, Math.PI * 2);
+  s.aliens.push(newAlien({ ...spot, vx: Math.cos(a) * 20, vy: Math.sin(a) * 20 }, destroyer));
+  explode(spot.x, spot.y, destroyer ? 48 : 24, '#c58bff', destroyer ? 140 : 90);
+}
+
+/** How many aliens may fly at once, and how long until the next one: both ramp up with time. */
+function alienPace() {
+  const s = state;
+  const extra = Math.min(RAMP.maxExtra, Math.floor(s.time / RAMP.extraEvery));
+  return { max: s.aliensRule.max + extra, wait: rand(...s.aliensRule.every) / (1 + s.time / RAMP.pace) };
+}
+
+/** The destroyer burns the nearest asteroid or beacon within laser range. */
+function fireLaser(d) {
+  const s = state;
+  const reach = (b) => (b.wrap === false ? Math.hypot(b.x - d.x, b.y - d.y) : distance(d, b, world)) - b.radius;
+  let prey = null;
+  let best = DESTROYER.laser.range;
+  for (const b of [...s.asteroids, ...s.targets]) {
+    if (b.dead) continue;
+    const r = reach(b);
+    if (r < best) {
+      best = r;
+      prey = b;
+    }
+  }
+  if (!prey) return false;
+  const { dx, dy } = prey.wrap === false ? { dx: prey.x - d.x, dy: prey.y - d.y } : delta(d, prey, world);
+  s.beams.push({ x: d.x, y: d.y, x2: d.x + dx, y2: d.y + dy, life: DESTROYER.laser.beam });
+  if (prey.kind === 'asteroid') destroyAsteroid(prey, d);
+  else {
+    prey.dead = true;
+    explode(prey.x, prey.y, 14, '#7dff9b', 100);
+  }
+  return true;
 }
 
 function explode(x, y, count, color, speed = 120) {
@@ -572,6 +730,74 @@ function nearestPilotShip(from) {
   return best;
 }
 
+// ---------------------------------------------------------------------------
+// Lock-on and guided missiles
+// ---------------------------------------------------------------------------
+
+/** The ships `ship` may lock onto: aliens hunt pilots; pilots hunt aliens, and each other in versus. */
+function lockCandidates(ship) {
+  if (ship.kind === 'alien') return pilotShips().filter((p) => !p.invulnerable);
+  const foes = state.aliens.filter((a) => !a.warp);
+  if (state.style === 'versus') foes.push(...pilotShips().filter((o) => o !== ship && !o.invulnerable));
+  return foes;
+}
+
+function updateLocks(dt) {
+  const live = new Set(ships());
+  for (const sh of live) {
+    if (sh.warp) continue;
+    const lock = sh.lock || (sh.lock = { target: null, time: 0 });
+    if (lock.target && !live.has(lock.target)) Object.assign(lock, { target: null, time: 0 });
+    // The enemy closest to the ship's heading, if it sits within the cone.
+    let best = null;
+    let bestErr = Infinity;
+    for (const t of lockCandidates(sh)) {
+      const { dx, dy } = delta(sh, t, world);
+      const d = Math.hypot(dx, dy);
+      if (d > LOCK.range) continue;
+      const err = Math.abs(angleDiff(Math.atan2(dy, dx) - sh.angle));
+      if (err < LOCK.cone + Math.atan2(t.radius, d) && err < bestErr) {
+        bestErr = err;
+        best = t;
+      }
+    }
+    if (best && best === lock.target) {
+      lock.time = Math.min(LOCK.time, lock.time + dt);
+    } else if (best && !lock.target) {
+      lock.target = best;
+      lock.time = dt;
+    } else if (lock.target) {
+      lock.time -= dt * LOCK.decay;
+      if (lock.time <= 0) Object.assign(lock, { target: null, time: 0 });
+    }
+  }
+}
+
+/** Guided missiles bend gently toward their target, until it gets behind them or guidance runs out. */
+function steerHomingMissiles(dt) {
+  const live = new Set(ships());
+  for (const m of state.missiles) {
+    m.ax = 0;
+    m.ay = 0;
+    if (!m.homing) continue;
+    m.homingLeft -= dt;
+    if (m.homingLeft <= 0 || !live.has(m.homing)) {
+      m.homing = null;
+      continue;
+    }
+    const { dx, dy } = delta(m, m.homing, world);
+    const err = angleDiff(Math.atan2(dy, dx) - Math.atan2(m.vy, m.vx));
+    if (Math.abs(err) > LOCK.homing.cone) {
+      m.homing = null; // dodged
+      continue;
+    }
+    const v = Math.hypot(m.vx, m.vy) || 1;
+    const a = Math.max(-1, Math.min(1, err * 3)) * LOCK.homing.accel;
+    m.ax = (-m.vy / v) * a;
+    m.ay = (m.vx / v) * a;
+  }
+}
+
 function update(dt) {
   const s = state;
   if (s.mode === 'paused') return;
@@ -586,6 +812,8 @@ function update(dt) {
       p.ship.invulnerable = Math.max(0, p.ship.invulnerable - dt);
     }
   }
+  updateLocks(dt);
+  steerHomingMissiles(dt);
   if (s.aliens.length) {
     const view = {
       world,
@@ -599,8 +827,15 @@ function update(dt) {
       a.warp = Math.max(0, a.warp - dt);
       view.target = playing ? nearestPilotShip(a) : null; // hunt the closest pilot
       command(a, alienPilot(a, view, dt), dt);
+      if (a.destroyer) {
+        a.hurt = Math.max(0, a.hurt - dt);
+        a.laserCooldown -= dt;
+        if (a.laserCooldown <= 0 && !a.warp && fireLaser(a)) a.laserCooldown = DESTROYER.laser.cooldown;
+      }
     }
   }
+  for (const b of s.beams) b.life -= dt;
+  s.beams = s.beams.filter((b) => b.life > 0);
 
   // Gravity: planet, moon and asteroids attract everything (and each other);
   // ships, missiles and beacons are too light to attract anything.
@@ -649,11 +884,16 @@ function update(dt) {
     }
   }
 
-  // Alien ships appear from time to time
+  // Alien ships appear from time to time, a little more often as time goes on.
   s.alienTimer -= dt;
   if (s.alienTimer <= 0) {
-    if (s.aliens.length < s.aliensRule.max) spawnAlien();
-    s.alienTimer = rand(...s.aliensRule.every);
+    const pace = alienPace();
+    if (s.aliens.length < pace.max) {
+      const destroyer =
+        playing && s.time > DESTROYER.after && !s.aliens.some((a) => a.destroyer) && Math.random() < DESTROYER.chance;
+      spawnAlien(destroyer);
+    }
+    s.alienTimer = pace.wait;
   }
 
   // Ship trails
@@ -732,8 +972,9 @@ function handleCollisions() {
     const alien = s.aliens.find((al) => !al.dead && missileHitsShip(m, al));
     if (alien) {
       m.dead = true;
-      killAlien(alien);
-      addScore(shooter(m), ALIEN.score);
+      const destroyer = alien.destroyer;
+      const killed = damageAlien(alien, true);
+      addScore(shooter(m), !destroyer ? ALIEN.score : killed ? DESTROYER.score : DESTROYER.hitScore);
       continue;
     }
     const victim = s.pilots.find((p) => p.ship && !p.ship.invulnerable && missileHitsShip(m, p.ship));
@@ -761,14 +1002,19 @@ function handleCollisions() {
     }
   }
 
-  // Aliens obey the same rules: planets, moons, rocks and other ships are deadly.
+  // Aliens obey the same rules: planets, moons, rocks and other ships are
+  // deadly. The destroyer's armour takes a hit from rocks and ships instead.
   for (const al of s.aliens) {
     if (al.dead) continue;
+    if (solids.some((b) => hit(al, b))) {
+      killAlien(al);
+      continue;
+    }
     const rock = s.asteroids.find((a) => !a.dead && hit(al, a));
     if (rock) destroyAsteroid(rock, al);
     const other = s.aliens.find((o) => o !== al && !o.dead && hit(al, o));
-    if (other) killAlien(other);
-    if (rock || other || solids.some((b) => hit(al, b))) killAlien(al);
+    if (other) damageAlien(other);
+    if (rock || other) damageAlien(al);
   }
 
   // Pilots' ships. Respawn protection covers rocks, missiles and other ships,
@@ -782,16 +1028,54 @@ function handleCollisions() {
     const alien = !shielded && s.aliens.find((a) => !a.dead && hit(ship, a));
     const mate = !shielded && s.pilots.find((o) => o !== p && o.ship && !o.ship.invulnerable && hit(ship, o.ship));
     if (rock) destroyAsteroid(rock, ship);
-    if (alien) killAlien(alien);
+    if (alien) damageAlien(alien);
     if (mate) killShip(mate);
     if (crashed || rock || alien || mate) killShip(p);
   }
 }
 
+/**
+ * One hit on an alien. Small aliens die; the destroyer loses armour, with a
+ * short grace after collisions so one crash doesn't count several times.
+ * Returns true when the alien is destroyed.
+ */
+function damageAlien(a, byMissile = false) {
+  if (a.dead) return false;
+  if (a.destroyer && !byMissile && a.hurt > 0) return false;
+  if (a.destroyer && a.hp > 1) {
+    a.hp -= 1;
+    a.hurt = DESTROYER.hurt;
+    a.flash = 0.25;
+    explode(a.x, a.y, 14, '#ffffff', 110);
+    return false;
+  }
+  killAlien(a);
+  return true;
+}
+
 function killAlien(a) {
   a.dead = true;
-  explode(a.x, a.y, 36, '#c58bff', 170);
+  explode(a.x, a.y, a.destroyer ? 70 : 36, '#c58bff', a.destroyer ? 220 : 170);
   explode(a.x, a.y, 16, '#ffffff', 90);
+  if (!a.destroyer) return;
+  // Small aliens escape from the wreck and join the fight.
+  const [lo, hi] = DESTROYER.escape;
+  const n = lo + Math.floor(Math.random() * (hi - lo + 1));
+  const turn = rand(0, Math.PI * 2);
+  for (let k = 0; k < n; k++) {
+    const dir = turn + (k / n) * Math.PI * 2;
+    const pod = newAlien({
+      x: a.x + Math.cos(dir) * 24,
+      y: a.y + Math.sin(dir) * 24,
+      vx: a.vx + Math.cos(dir) * 70,
+      vy: a.vy + Math.sin(dir) * 70,
+      angle: dir,
+    });
+    pod.warp = 0;
+    pod.fireCooldown = 1;
+    wrapPosition(pod, world);
+    state.aliens.push(pod);
+  }
 }
 
 function destroyAsteroid(a, by) {
@@ -1041,12 +1325,38 @@ function render() {
   }
 
   for (const m of s.missiles) {
+    if (m.homing) {
+      // Guided missiles glow red.
+      ctx.fillStyle = 'rgba(255, 70, 70, 0.35)';
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, 7, 0, Math.PI * 2);
+      ctx.fill();
+    }
     drawSprite('missile', m.x, m.y, MISSILE.size, 0, Math.min(1, m.life * 2));
+  }
+
+  for (const b of s.beams) {
+    ctx.strokeStyle = `rgba(255, 60, 200, ${Math.min(1, (b.life / DESTROYER.laser.beam) * 1.5)})`;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(b.x, b.y);
+    ctx.lineTo(b.x2, b.y2);
+    ctx.stroke();
   }
 
   for (const a of s.aliens) {
     const alpha = a.warp ? 1 - a.warp / ALIEN.warpIn : 1;
-    drawWrapped(a, SHIP.size / 2, (x, y) => drawShip(a, 'alien', x, y, alpha));
+    const sprite = a.destroyer ? 'destroyer' : 'alien';
+    drawWrapped(a, sizeOf(a) / 2, (x, y) => {
+      drawShip(a, sprite, x, y, alpha);
+      if (a.destroyer && a.flash > 0) {
+        ctx.fillStyle = `rgba(255, 255, 255, ${a.flash * 1.6})`;
+        ctx.beginPath();
+        ctx.arc(x, y, a.radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+    if (a.flash) a.flash = Math.max(0, a.flash - 1 / 60);
   }
 
   const labels = s.pilots.length > 1;
@@ -1065,12 +1375,59 @@ function render() {
     });
   }
 
+  drawLocks();
+
   for (const p of s.particles) {
     ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
     ctx.fillStyle = p.color;
     ctx.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
   }
   ctx.globalAlpha = 1;
+}
+
+/**
+ * Lock markers: a square blinks around a ship while someone locks onto it and
+ * turns red once locked. Each extra ship locking the same target adds a
+ * corner bracket instead of another square.
+ */
+function drawLocks() {
+  const s = state;
+  const byTarget = new Map();
+  for (const sh of ships()) {
+    const lock = sh.lock;
+    if (!lock || !lock.target || lock.time <= 0) continue;
+    if (!byTarget.has(lock.target)) byTarget.set(lock.target, []);
+    byTarget.get(lock.target).push(lock.time >= LOCK.time);
+  }
+  const blinkOn = Math.floor(s.time * 6) % 2 === 0;
+  for (const [target, locks] of byTarget) {
+    locks.sort((a, b) => b - a); // a finished lock draws the square
+    const h = sizeOf(target) / 2 + 8;
+    drawWrapped(target, h + 10, (x, y) => {
+      ctx.lineWidth = 2;
+      locks.forEach((locked, k) => {
+        if (!locked && !blinkOn) return;
+        ctx.strokeStyle = locked ? '#ff3b3b' : '#ffd34d';
+        if (k === 0) {
+          ctx.strokeRect(x - h, y - h, h * 2, h * 2);
+          return;
+        }
+        // Corners 1 to 3: top right, bottom right, bottom left, just outside the square.
+        const c = [
+          [1, -1],
+          [1, 1],
+          [-1, 1],
+        ][(k - 1) % 3];
+        const o = h + 5;
+        const arm = 9;
+        ctx.beginPath();
+        ctx.moveTo(x + c[0] * (o - arm), y + c[1] * o);
+        ctx.lineTo(x + c[0] * o, y + c[1] * o);
+        ctx.lineTo(x + c[0] * o, y + c[1] * (o - arm));
+        ctx.stroke();
+      });
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1158,6 +1515,13 @@ function openSetup(levelIndex) {
 }
 
 function renderSetup() {
+  document.getElementById('setup-count').hidden = !hasKeyboard();
+  if (!hasKeyboard()) setup.count = 1;
+  document.getElementById('setup-steer-wrap').hidden = !(document.body.classList.contains('touch') && tiltAvailable());
+  for (const b of document.querySelectorAll('#setup-steer button')) {
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(b.dataset.tilt === (setup.tilt ? '1' : '0')));
+  }
   for (const b of document.querySelectorAll('#setup-count button')) {
     b.setAttribute('role', 'radio');
     b.setAttribute('aria-checked', String(Number(b.dataset.count) === setup.count));
@@ -1171,7 +1535,6 @@ function renderSetup() {
   const help = document.getElementById('setup-mode-help');
   help.hidden = setup.count === 1;
   help.textContent = STYLES[setup.mode].help;
-  document.getElementById('setup-touch-note').hidden = !(setup.count === 2 && document.body.classList.contains('touch'));
 
   const holder = document.getElementById('setup-pilots');
   holder.replaceChildren(
@@ -1290,6 +1653,19 @@ for (const b of document.querySelectorAll('#setup-count button')) {
     renderSetup();
   });
 }
+for (const b of document.querySelectorAll('#setup-steer button')) {
+  b.addEventListener('click', async () => {
+    const on = b.dataset.tilt === '1';
+    if (on && !(await askTiltPermission())) {
+      setupError.textContent = 'Motion sensors are not available, so the turn buttons stay.';
+      setupError.hidden = false;
+      return;
+    }
+    setup.tilt = on;
+    setupError.hidden = true;
+    renderSetup();
+  });
+}
 for (const b of document.querySelectorAll('#setup-mode button')) {
   b.addEventListener('click', () => {
     setup.mode = b.dataset.mode;
@@ -1359,4 +1735,10 @@ window.gravityPilot = {
   startGame,
   showMenu,
   openSetup,
+  spawnAlien,
+  damageAlien,
+  alienPace,
+  step(n = 1) {
+    for (let i = 0; i < n; i++) update(DT);
+  },
 };

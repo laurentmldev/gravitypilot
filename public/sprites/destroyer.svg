@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <!-- Alien destroyer. Nose points right (angle 0), like every ship. -->
+  <path d="M118 64 L92 44 L70 22 L30 18 L14 34 L26 50 L10 64 L26 78 L14 94 L30 110 L70 106 L92 84 Z"
+        fill="#2a1545" stroke="#c58bff" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M34 26 L66 30 L80 46 L40 44 Z" fill="#4b2a78" stroke="#c58bff" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M34 102 L66 98 L80 82 L40 84 Z" fill="#4b2a78" stroke="#c58bff" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M96 64 L72 50 L50 64 L72 78 Z" fill="#c58bff"/>
+  <circle cx="74" cy="64" r="6" fill="#ff5cf0"/>
+  <rect x="100" y="60" width="16" height="8" rx="2" fill="#ff5cc8"/>
+  <circle cx="30" cy="64" r="5" fill="#ff8a4c"/>
+</svg>

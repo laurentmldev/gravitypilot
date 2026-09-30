@@ -32,7 +32,7 @@ function run({ world, solids = [], alien, target = null, seconds, usePilot = tru
     steer(alien, cmd, DT);
     alien.fireCooldown -= DT;
     if (cmd.fire && alien.fireCooldown <= 0 && missiles.length < MISSILE.maxPerShip) {
-      missiles.push({ kind: 'missile', ...missileLaunch(alien), radius: MISSILE.radius, mass: 0, life: MISSILE.life, owner: alien });
+      missiles.push({ kind: 'missile', ...missileLaunch(alien), radius: MISSILE.radius, mass: 0, gravity: MISSILE.gravity, life: MISSILE.life, owner: alien });
       alien.fireCooldown = MISSILE.cooldown;
       result.shots++;
     }

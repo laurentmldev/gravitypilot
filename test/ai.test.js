@@ -102,3 +102,24 @@ test('an alien hunts a player orbiting a planet with a moon and survives', () =>
   assert.equal(r.alienDead, false);
   assert.ok(r.shots > 0, 'the alien should have fired');
 });
+
+test('a fighter only aims across the screen, a destroyer also through the edges', () => {
+  const world = { w: 1280, h: 800 };
+  // The target sits across the right edge: 260 units away through the edge,
+  // 1020 across the screen.
+  const target = { kind: 'ship', x: 230, y: 400, vx: 0, vy: 0, radius: SHIP.radius, mass: 0, angle: 0 };
+  const plan = (wrapAim) => {
+    const alien = alienAt(1250, 400, 0, 0, 0);
+    const view = { world, sources: [], solids: [], missiles: [], ships: [alien, target], target, wrapAim };
+    const cmd = pilot(alien, view, DT, seeded(1));
+    return { wantsToFire: cmd.fire || alien.pilot.fire, angle: alien.pilot.angle };
+  };
+  // Through the edge the target is in range, straight ahead: fire.
+  const wrap = plan(true);
+  assert.ok(wrap.wantsToFire, 'should shoot through the edge');
+  assert.ok(Math.abs(wrap.angle) < 0.3);
+  // Across the screen it is out of range: no shot, and no aiming through the edge.
+  const fighter = plan(false);
+  assert.equal(fighter.wantsToFire, false);
+  assert.ok(Math.abs(leadAngle({ x: 1250, y: 400, vx: 0, vy: 0 }, target, world, false) - Math.PI) < 1e-9);
+});

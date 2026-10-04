@@ -27,9 +27,11 @@ export function createPilot() {
 
 /**
  * Decide this step's commands for `self`.
- * `view` = { world, sources, solids, missiles, ships, target } where `sources`
- * are the bodies with mass, `solids` the planet and moon, `ships` every ship
- * (including `self`) and `target` the ship to attack, or null.
+ * `view` = { world, sources, solids, missiles, ships, target, wrapAim } where
+ * `sources` are the bodies with mass, `solids` the planet and moon, `ships`
+ * every ship (including `self`) and `target` the ship to attack, or null.
+ * With `wrapAim: false` the pilot only aims at the target across the screen,
+ * never through its edges (missiles still wrap if they miss).
  */
 export function pilot(self, view, dt, rng = Math.random) {
   const p = self.pilot;
@@ -97,6 +99,12 @@ function dist2(a, b, world) {
   return dx * dx + dy * dy;
 }
 
+/** Vector from a to b: the shortest one through the edges, or straight across the screen. */
+function towards(a, b, world, wrap) {
+  if (!wrap) return { dx: b.x - a.x, dy: b.y - a.y };
+  return { dx: wrapDelta(b.x - a.x, world.w), dy: wrapDelta(b.y - a.y, world.h) };
+}
+
 /** Is tracked body i dangerous to `self` at time t? */
 function hazardAt(fc, i, t) {
   const m = fc.meta[i];
@@ -153,7 +161,7 @@ export function simulateShip(self, angle, thrust, fc) {
  * it comes to the ship at index `targetIdx` (Infinity if it dies first), and
  * whether it would come back to hit `self` (following `selfPath`).
  */
-export function simulateMissile(self, angle, fc, targetIdx, selfPath) {
+export function simulateMissile(self, angle, fc, targetIdx, selfPath, wrapAim = true) {
   const { world, frames } = fc;
   const m = missileLaunch(self, angle);
   const dt = PLAN.dt;
@@ -165,10 +173,15 @@ export function simulateMissile(self, angle, fc, targetIdx, selfPath) {
     m.vy += g.ay * MISSILE.gravity * dt;
     m.x += m.vx * dt;
     m.y += m.vy * dt;
+    // Without wrap aiming, a shot only counts until it leaves the screen.
+    if (!wrapAim && (m.x < 0 || m.x >= world.w || m.y < 0 || m.y >= world.h)) {
+      return { miss: best, time: Infinity, selfHit: false };
+    }
     wrapPosition(m, world);
     const next = frames[k + 1];
     const target = next[targetIdx];
-    const d = Math.sqrt(dist2(m, target, world)) - fc.meta[targetIdx].radius - MISSILE.radius;
+    const { dx: tx, dy: ty } = towards(m, target, world, wrapAim);
+    const d = Math.hypot(tx, ty) - fc.meta[targetIdx].radius - MISSILE.radius;
     if (d < best) best = d;
     if (d <= 0) return { miss: 0, time: t, selfHit: false };
     for (let i = 0; i < next.length; i++) {
@@ -185,9 +198,8 @@ export function simulateMissile(self, angle, fc, targetIdx, selfPath) {
 }
 
 /** Straight-line lead angle, ignoring gravity; the gravity-aware sweep refines it. */
-export function leadAngle(self, target, world) {
-  const rx = wrapDelta(target.x - self.x, world.w);
-  const ry = wrapDelta(target.y - self.y, world.h);
+export function leadAngle(self, target, world, wrap = true) {
+  const { dx: rx, dy: ry } = towards(self, target, world, wrap);
   const ux = target.vx - self.vx;
   const uy = target.vy - self.vy;
   const s = MISSILE.speed;
@@ -261,16 +273,16 @@ function plan(self, view, p, rng) {
     return;
   }
   const targetIdx = fc.tracked.indexOf(target);
-  const lead = leadAngle(self, target, view.world);
+  const wrap = view.wrapAim !== false;
+  const lead = leadAngle(self, target, view.world, wrap);
   let best = { miss: Infinity, angle: lead };
   for (let j = -6; j <= 6; j++) {
     const angle = lead + j * 0.06;
-    const r = simulateMissile(self, angle, fc, targetIdx, coast.path);
+    const r = simulateMissile(self, angle, fc, targetIdx, coast.path, wrap);
     if (!r.selfHit && r.miss < best.miss) best = { miss: r.miss, angle };
   }
   p.angle = best.angle + (rng() - 0.5) * 2 * PLAN.aimNoise;
-  const dx = wrapDelta(target.x - self.x, view.world.w);
-  const dy = wrapDelta(target.y - self.y, view.world.h);
+  const { dx, dy } = towards(self, target, view.world, wrap);
   p.fire = best.miss <= 2 && Math.hypot(dx, dy) < PLAN.range;
 }
 
@@ -287,8 +299,8 @@ function desiredVelocity(self, view) {
   let y = 0;
   const target = view.target;
   if (target) {
-    const dx = wrapDelta(target.x - self.x, world.w);
-    const dy = wrapDelta(target.y - self.y, world.h);
+    // Close in the way the pilot will shoot: across the screen unless wrap aiming.
+    const { dx, dy } = towards(self, target, world, view.wrapAim !== false);
     const d = Math.hypot(dx, dy) || 1;
     const speed = Math.max(-PLAN.cruise, Math.min(PLAN.cruise, 0.6 * (d - PLAN.standoff)));
     x += (dx / d) * speed;

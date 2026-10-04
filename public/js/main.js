@@ -752,11 +752,14 @@ function updateLocks(dt) {
     let best = null;
     let bestErr = Infinity;
     for (const t of lockCandidates(sh)) {
-      const { dx, dy } = delta(sh, t, world);
+      // Alien fighters only lock across the screen, like they aim.
+      const fighter = sh.kind === 'alien' && !sh.destroyer;
+      const { dx, dy } = fighter ? { dx: t.x - sh.x, dy: t.y - sh.y } : delta(sh, t, world);
       const d = Math.hypot(dx, dy);
       if (d > LOCK.range) continue;
       const err = Math.abs(angleDiff(Math.atan2(dy, dx) - sh.angle));
-      if (err < LOCK.cone + Math.atan2(t.radius, d) && err < bestErr) {
+      // The nose must point within a zone twice the size of the target ship.
+      if (err < Math.atan2(sizeOf(t), d) && err < bestErr) {
         bestErr = err;
         best = t;
       }
@@ -826,6 +829,7 @@ function update(dt) {
     for (const a of s.aliens) {
       a.warp = Math.max(0, a.warp - dt);
       view.target = playing ? nearestPilotShip(a) : null; // hunt the closest pilot
+      view.wrapAim = !!a.destroyer; // fighters only shoot across the screen
       command(a, alienPilot(a, view, dt), dt);
       if (a.destroyer) {
         a.hurt = Math.max(0, a.hurt - dt);

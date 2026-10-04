@@ -17,12 +17,12 @@ export const MISSILE = {
   gravity: 1.35,
 };
 
-// Lock-on: keep the nose on an enemy ship for `time` seconds and the next
-// missile is slightly guided toward it. Guidance is weak and short-lived, so
-// a pilot who keeps moving can still dodge it.
+// Lock-on: keep the nose pointed within a zone twice the size of an enemy
+// ship for `time` seconds and the next missile is slightly guided toward it.
+// Guidance is weak and short-lived, so a pilot who keeps moving can still
+// dodge it.
 export const LOCK = {
-  time: 2,
-  cone: 0.2, // radians of slack around the target's bearing
+  time: 0.8,
   range: 650,
   decay: 3, // looking away drains the lock this many times faster than it builds
   homing: { accel: 110, time: 3.5, cone: 1.2 },

@@ -19,15 +19,16 @@ export const MISSILE = {
 
 // Lock-on: keep the nose pointed within a zone twice the size of an enemy
 // ship (never narrower than `cone` plus the ship's own angular radius) for
-// `time` seconds and the next missile is slightly guided toward it.
-// Guidance is weak and short-lived, so a pilot who keeps moving can still
-// dodge it.
+// `time` seconds and the next missile is guided toward it for a few seconds.
 export const LOCK = {
   time: 0.8,
   cone: 0.2, // radians: the minimum slack around the target's bearing
   range: 650,
   decay: 3, // looking away drains the lock this many times faster than it builds
-  homing: { accel: 110, time: 3.5, cone: 1.2 },
+  // Strong guidance that leads its target: a ship drifting or crossing is
+  // caught, one that just thrusts away often is, but a sharp turn across
+  // the missile's path still shakes it off most of the time.
+  homing: { accel: 250, time: 5, cone: 1.8, gain: 4 },
 };
 
 /** Normalise an angle to (-π, π]. */

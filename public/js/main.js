@@ -790,14 +790,20 @@ function steerHomingMissiles(dt) {
       m.homing = null;
       continue;
     }
-    const { dx, dy } = delta(m, m.homing, world);
-    const err = angleDiff(Math.atan2(dy, dx) - Math.atan2(m.vy, m.vx));
+    // Steer for where the target will be when the missile gets there, so a
+    // ship flying across the missile's path doesn't simply leave it behind.
+    const t = m.homing;
+    const { dx, dy } = delta(m, t, world);
+    const dist = Math.hypot(dx, dy) || 1;
+    const closing = Math.max(60, -(dx * (t.vx - m.vx) + dy * (t.vy - m.vy)) / dist);
+    const tgo = Math.min(2, dist / closing);
+    const err = angleDiff(Math.atan2(dy + t.vy * tgo, dx + t.vx * tgo) - Math.atan2(m.vy, m.vx));
     if (Math.abs(err) > LOCK.homing.cone) {
       m.homing = null; // dodged
       continue;
     }
     const v = Math.hypot(m.vx, m.vy) || 1;
-    const a = Math.max(-1, Math.min(1, err * 3)) * LOCK.homing.accel;
+    const a = Math.max(-1, Math.min(1, err * LOCK.homing.gain)) * LOCK.homing.accel;
     m.ax = (-m.vy / v) * a;
     m.ay = (m.vx / v) * a;
   }

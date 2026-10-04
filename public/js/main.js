@@ -758,8 +758,10 @@ function updateLocks(dt) {
       const d = Math.hypot(dx, dy);
       if (d > LOCK.range) continue;
       const err = Math.abs(angleDiff(Math.atan2(dy, dx) - sh.angle));
-      // The nose must point within a zone twice the size of the target ship.
-      if (err < Math.atan2(sizeOf(t), d) && err < bestErr) {
+      // The nose must point within a zone twice the size of the target ship,
+      // or within the older, wider cone when that is more forgiving (far away).
+      const zone = Math.max(Math.atan2(sizeOf(t), d), LOCK.cone + Math.atan2(t.radius, d));
+      if (err < zone && err < bestErr) {
         bestErr = err;
         best = t;
       }
